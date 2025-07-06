@@ -76,7 +76,7 @@ namespace TrustedUninstaller.Shared.Actions
                     var newUser = ad.Children.Add(this.Username, "user");
 
                     newUser.Invoke("SetPassword", "user");
-                    newUser.Invoke("Put", "Description", "Created by the AME Wizard");
+                    newUser.Invoke("Put", "Description", "Created by the AME");
                     newUser.CommitChanges();
 
 

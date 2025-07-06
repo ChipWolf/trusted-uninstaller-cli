@@ -740,7 +740,23 @@ namespace TrustedUninstaller.Shared
                 if (!path.Contains("Users\\Default\\") && !classHive)
                     HivesLoaded++;
             }
-            private static void AcquirePrivileges()
+            
+            public static void HookHive(string mountName, string filePath)
+            {
+                using var parentKey = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
+                var result = RegLoadKey(parentKey.Handle.DangerousGetHandle(), mountName, filePath);
+                if (result != 0)
+                    throw new Exception("Failed to mount " + mountName + ": " + result);
+            }
+            public static void UnhookHive(string mountName)
+            {
+                using var parentKey = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
+                var result = RegUnLoadKey(parentKey.Handle.DangerousGetHandle(), mountName);
+                if (result != 0)
+                    throw new Exception("Failed to unmount " + mountName + ": " + result);
+            }
+            
+            public static void AcquirePrivileges()
             {
                 ulong luid = 0;
                 bool throwaway;
@@ -757,6 +773,32 @@ namespace TrustedUninstaller.Shared
                 RtlAdjustPrivilege((int)luid, false, false, out throwaway);
                 LookupPrivilegeValue(IntPtr.Zero, "SeBackupPrivilege", ref luid);
                 RtlAdjustPrivilege((int)luid, false, false, out throwaway);
+            }
+
+
+            public static void UnHookWimHives(string guid)
+            {
+                AcquirePrivileges();
+                
+                using (var hku = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default))
+                {
+                    if (RegUnLoadKey(hku.Handle.DangerousGetHandle(), "HKCU-" + guid) != 0)
+                        Log.WriteSafe(LogType.Warning, $"Failed to unmount default user hive.", null);
+                    if (RegUnLoadKey(hku.Handle.DangerousGetHandle(), "HKCU_Classes-" + guid) != 0)
+                        Log.WriteSafe(LogType.Warning, $"Failed to unmount default user classes hive.", null);
+                    if (RegUnLoadKey(hku.Handle.DangerousGetHandle(), "HKU-S-1-5-18-" + guid) != 0)
+                        Log.WriteSafe(LogType.Warning, $"Failed to unmount system profile user hive.", null);
+                    //if (RegUnLoadKey(hku.Handle.DangerousGetHandle(), "HKU-S-1-5-19-" + guid) != 0)
+                    //    Log.WriteSafe(LogType.Warning, $"Failed to unmount local service hive hive.", null);
+                    //if (RegUnLoadKey(hku.Handle.DangerousGetHandle(), "HKU-S-1-5-20-" + guid) != 0)
+                    //    Log.WriteSafe(LogType.Warning, $"Failed to unmount network service hive hive.", null);
+                    
+                    foreach (var hive in new[] { "SOFTWARE", "SYSTEM", "SECURITY", "SAM" })
+                    {
+                        if (RegUnLoadKey(hku.Handle.DangerousGetHandle(), "HKLM-" + hive + "-" + guid) != 0)
+                            Log.WriteSafe(LogType.Warning, $"Failed to unmount {hive} hive.", null);
+                    }
+                }
             }
 
             private static bool HivesHooked;
@@ -822,7 +864,7 @@ namespace TrustedUninstaller.Shared
                         }
                         LoadFromFile($@"{userDir}\AppData\Local\Microsoft\Windows\UsrClass.dat", true);
                     }
-                    if (userDirs.Any()) ReturnPrivileges();
+                    //if (userDirs.Any()) ReturnPrivileges();
                 }
                 catch (Exception e)
                 {
@@ -844,7 +886,7 @@ namespace TrustedUninstaller.Shared
                     {
                         RegUnLoadKey(usersKey.Handle.DangerousGetHandle(), userHive);
                     }
-                    if (userHives.Any()) ReturnPrivileges();
+                    //if (userHives.Any()) ReturnPrivileges();
                 
                     usersKey.Close();
                 }

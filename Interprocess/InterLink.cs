@@ -16,6 +16,7 @@ using System.Runtime.Serialization;
 using System.Security;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -56,7 +57,7 @@ namespace Interprocess
     }
 
     #endregion
-
+    
     public static partial class InterLink
     {
         // 10MB
@@ -526,7 +527,7 @@ namespace Interprocess
                 return default;
             }
 
-            return message.Result.Value == null ? default : (TResult)message.Result.Value.Value;
+            return message.Result.Value == null || typeof(TResult) == typeof(Task) ? default : (TResult)message.Result.Value.Value;
         }
 
         public static Task<Wrap.SafeResult<TResult>> ExecuteSafeAsync<TResult>(Expression<Func<Task<TResult>>> operation, bool logExceptions = false, int timeout = Timeout.Infinite) => ExecuteSafeAsync(operation, TargetLevel.Auto, logExceptions, timeout);
@@ -877,7 +878,7 @@ namespace Interprocess
                     ParentClass = new Serializables.SerializableType(methodInfo.ReflectedType),
                     Method = methodInfo,
                     GenericTypes = GetGenericArguments(methodInfo),
-                    Parameters = GetParameters(methodExpression.Arguments, lambdaExpression.Parameters.ToArray(), args)
+                    Parameters = GetParameters(methodExpression.Arguments, lambdaExpression.Parameters, args)
                 },
             };
         }
@@ -905,7 +906,7 @@ namespace Interprocess
             return method.GetGenericArguments().Select(arg => new Serializables.SerializableType(arg)).ToArray();
         }
 
-        public static Serializables.SerializableValue[] GetParameters(ReadOnlyCollection<Expression> arguments, ParameterExpression[] parameters, (Type Type, object Value)[] args = null)
+        public static Serializables.SerializableValue[] GetParameters(ReadOnlyCollection<Expression> arguments, ReadOnlyCollection<ParameterExpression> parameters, (Type Type, object Value)[] args = null)
         {
             return arguments.Select(arg =>
             {
@@ -915,10 +916,10 @@ namespace Interprocess
                 Expression expression = arg;
                 if (args != null)
                 {
-                    if (parameters.Length != args.Length)
-                        throw new SerializationException($"The number of parameters ({parameters.Length}) does not match the number of supplied arguments ({args.Length}).");
+                    if (parameters.Count != args.Length)
+                        throw new SerializationException($"The number of parameters ({parameters.Count}) does not match the number of supplied arguments ({args.Length}).");
 
-                    for (var i = 0; i < parameters.Length; i++)
+                    for (var i = 0; i < parameters.Count; i++)
                     {
                         if (parameters[i].Type != args[i].Type)
                             throw new SerializationException($"The parameter type ({parameters[i].Type}) does not match the argument type ({args[i].Type}).");

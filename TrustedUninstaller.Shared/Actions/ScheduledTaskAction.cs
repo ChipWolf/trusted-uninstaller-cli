@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Core;
+using Microsoft.Win32;
 using Microsoft.Win32.TaskScheduler;
 using TrustedUninstaller.Shared.Exceptions;
 using TrustedUninstaller.Shared.Tasks;
@@ -47,35 +48,47 @@ namespace TrustedUninstaller.Shared.Actions
             {
                 return UninstallTaskStatus.InProgress;
             }
-            
-            using TaskService ts = new TaskService();
 
-            if (Operation != ScheduledTaskOperation.DeleteFolder)
+            if (AmeliorationUtil.ISO && Operation != ScheduledTaskOperation.Delete && Operation != ScheduledTaskOperation.DeleteFolder)
             {
-                var task = ts.GetTask(Path);
-                if (task is null)
-                {
-                    return Operation == ScheduledTaskOperation.Delete ?
-                        UninstallTaskStatus.Completed : UninstallTaskStatus.ToDo;
-                }
-
-                if (task.Enabled)
-                {
-                    return Operation == ScheduledTaskOperation.Enable ?
-                        UninstallTaskStatus.Completed : UninstallTaskStatus.ToDo;
-                }
-
-                return Operation == ScheduledTaskOperation.Disable ?
-                    UninstallTaskStatus.Completed : UninstallTaskStatus.ToDo;
+                output.WriteLineSafe("Warning", "Enabling and disabling scheduled tasks is not supported on ISOs, skipping...");
+                return UninstallTaskStatus.Completed;
             }
             else
             {
-                var folder = ts.GetFolder(Path);
-                if (folder == null)
-                    return UninstallTaskStatus.Completed;
-                
-                return folder.GetTasks().Any() ? UninstallTaskStatus.ToDo : UninstallTaskStatus.Completed;
+                using var schedule = (AmeliorationUtil.ISO ? Registry.Users.OpenSubKey($@"HKLM-SOFTWARE-{AmeliorationUtil.ISOGuid}\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache") :
+                    Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache"))!;
+                using var taskKey = schedule.OpenSubKey(@"Tree\" + Path.TrimStart('\\').Replace('/', '\\'), true);
+                return (taskKey == null || (!AmeliorationUtil.ISO && Wrap.ExecuteSafe(() =>
+                {
+                    using TaskService ts = new TaskService();
+
+                    if (Operation != ScheduledTaskOperation.DeleteFolder)
+                    {
+                        var task = ts.GetTask(Path);
+                        if (task is null)
+                        {
+                            return Operation == ScheduledTaskOperation.Delete;
+                        }
+
+                        if (task.Enabled)
+                        {
+                            return Operation == ScheduledTaskOperation.Enable;
+                        }
+
+                        return Operation == ScheduledTaskOperation.Disable;
+                    }
+                    else
+                    {
+                        var folder = ts.GetFolder(Path);
+                        if (folder == null)
+                            return true;
+
+                        return !folder.GetTasks().Any();
+                    }
+                }, false, true).Value)) ? UninstallTaskStatus.Completed : UninstallTaskStatus.ToDo;
             }
+
         }
 
         public async Task<bool> RunTask(Output.OutputWriter output)
@@ -89,13 +102,23 @@ namespace TrustedUninstaller.Shared.Actions
 
             output.WriteLineSafe("Info", $"{Operation.ToString().TrimEnd('e')}ing scheduled task '{Path}'...");
 
-            using TaskService ts = new TaskService();
-
             InProgress = true;
 
+            if (AmeliorationUtil.ISO)
+            {
+                if (Operation != ScheduledTaskOperation.Delete && Operation != ScheduledTaskOperation.DeleteFolder)
+                    output.WriteLineSafe("Warning", "Enabling and disabling scheduled tasks is not supported on ISOs, skipping...");
+                else
+                    DeleteUsingRegistry(Path.TrimStart('\\').Replace('/', '\\'));
+
+                InProgress = false;
+                return true;
+            }
+            
+            using TaskService ts = new TaskService();
+            
             if (Operation != ScheduledTaskOperation.DeleteFolder)
             {
-
                 var task = ts.GetTask(Path);
                 if (task is null)
                 {
@@ -114,11 +137,27 @@ namespace TrustedUninstaller.Shared.Actions
                 {
                     case ScheduledTaskOperation.Delete:
                         // TODO: This will probably not work if we actually use sub-folders
-                        ts.RootFolder.DeleteTask(Path);
+                        try
+                        {
+                            ts.RootFolder.DeleteTask(Path, false);
+                            DeleteUsingRegistry(Path.TrimStart('\\').Replace('/', '\\'));
+                        }
+                        catch (Exception e)
+                        {
+                            Log.EnqueueExceptionSafe(LogType.Warning, e);
+                            DeleteUsingRegistry(Path.TrimStart('\\').Replace('/', '\\'));
+                        }
                         break;
                     case ScheduledTaskOperation.Enable:
                     case ScheduledTaskOperation.Disable:
                         {
+                            
+                            if (AmeliorationUtil.ISO)
+                            {
+                                output.WriteLineSafe("Warning", "Enabling and disabling scheduled tasks is not supported on ISOs, skipping...");
+                                return true;
+                            }
+                            
                             if (task is null && !(RawTask is null))
                             {
                                 task = ts.RootFolder.RegisterTask(Path, RawTask);
@@ -144,24 +183,103 @@ namespace TrustedUninstaller.Shared.Actions
             }
             else
             {
-                var folder = ts.GetFolder(Path);
-
-                if (folder is null) return true;
-                
-                folder.GetTasks().ToList().ForEach(x => folder.DeleteTask(x.Name));
-
-                try
+                if (AmeliorationUtil.ISO)
+                    DeleteUsingRegistry(Path);
+                else
                 {
-                    folder.Parent.DeleteFolder(folder.Name);
-                }
-                catch (Exception e)
-                {
-                    Log.WriteExceptionSafe(LogType.Warning, e, $"Error removing task folder.", output.LogOptions);
+                    var folder = ts.GetFolder(Path);
+
+                    if (folder is null) return true;
+
+                    folder.GetTasks().ToList().ForEach(x =>
+                    {
+                        try
+                        {
+                            folder.DeleteTask(x.Name, false);
+                            DeleteUsingRegistry(System.IO.Path.Combine(Path.TrimStart('\\').Replace('/', '\\'), x.Name));
+                        }
+                        catch (Exception e)
+                        {
+                            Log.EnqueueExceptionSafe(LogType.Warning, e);
+                            DeleteUsingRegistry(System.IO.Path.Combine(Path.TrimStart('\\').Replace('/', '\\'), x.Name));
+                        }
+                    });
+
+                    try
+                    {
+                        folder.Parent.DeleteFolder(folder.Name);
+                        DeleteUsingRegistry(Path.TrimStart('\\').Replace('/', '\\'));
+                    }
+                    catch (Exception e)
+                    {
+                        Log.EnqueueExceptionSafe(LogType.Warning, e);
+                        DeleteUsingRegistry(Path.TrimStart('\\').Replace('/', '\\'));
+                    }
                 }
 
                 InProgress = false;
                 return true;
             }
+        }
+        private static void DeleteUsingRegistry(string path, bool throwOnTaskNotFound = false)
+        {
+            using var schedule = (AmeliorationUtil.ISO ? Registry.Users.OpenSubKey($@"HKLM-SOFTWARE-{AmeliorationUtil.ISOGuid}\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache") : Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache"))!;
+            using var taskKey = schedule.OpenSubKey(@"Tree\" + path, true);
+            if (taskKey == null)
+            {
+                if (throwOnTaskNotFound)
+                    throw new Exception($"Task '{path}' not found in tree.");
+                else
+                    return;
+            }
+
+            foreach (string subTask in taskKey.GetSubKeyNames())
+            {
+                using var subTaskKey = taskKey.OpenSubKey(subTask)!;
+                if (subTaskKey.GetSubKeyNames().Any())
+                {
+                    subTaskKey.Dispose();
+                    DeleteUsingRegistry(path + "\\" + subTask);
+                }
+            }
+            foreach (string subTask in taskKey.GetSubKeyNames())
+            {
+                using var subTaskKey = taskKey.OpenSubKey(subTask)!;
+                var id = (string)subTaskKey.GetValue("Id");
+                if (id != null)
+                {
+                    DeleteTaskIdRelations(schedule, id);
+                }
+                subTaskKey.Dispose();
+                taskKey.DeleteSubKeyTree(subTask);
+            }
+            
+            taskKey.Dispose();
+            using var treeKey = schedule.OpenSubKey(@"Tree", true);
+            treeKey!.DeleteSubKeyTree(path);
+        }
+        
+        private static void DeleteTaskIdRelations(RegistryKey schedule, string id)
+        {
+            foreach (var relation in new [] { "Boot", "Logon", "Maintenance", "Plain", "Tasks" })
+            {
+                using var relationKey = schedule.OpenSubKey(relation, true);
+                if (relationKey == null)
+                    continue;
+                var match = relationKey.GetSubKeyNames().FirstOrDefault(x => x.Equals(id, StringComparison.OrdinalIgnoreCase));
+                if (match == null)
+                    continue;
+                
+                relationKey.DeleteSubKeyTree(match);
+            }
+            using var flagsKey = schedule.OpenSubKey("TaskStateFlags", true);
+            if (flagsKey == null)
+                return;
+            var flagMatch = flagsKey.GetSubKeyNames().FirstOrDefault(x => x.Equals("/" + id.Replace("\\", "/"), StringComparison.OrdinalIgnoreCase));
+            if (flagMatch == null)
+                return;
+                
+            flagsKey.DeleteSubKeyTree(flagMatch);
         }
     }
 }

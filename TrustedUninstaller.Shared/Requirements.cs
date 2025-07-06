@@ -99,7 +99,7 @@ namespace TrustedUninstaller.Shared
                 if (await new UCPDDisabled().IsMet()) metRequirements.Add(Requirement.UCPDDisabled);
             
             if (requirements.Contains(Requirement.DefenderToggled))
-                if (await new DefenderDisabled().IsMet()) metRequirements.Add(Requirement.DefenderToggled);
+                if (await new DefenderToggled().IsMet()) metRequirements.Add(Requirement.DefenderToggled);
 
             if (requirements.Contains(Requirement.LocalAccounts))
                 metRequirements.Add(Requirement.LocalAccounts);

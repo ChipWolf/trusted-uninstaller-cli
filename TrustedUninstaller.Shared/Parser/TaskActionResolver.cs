@@ -17,7 +17,6 @@ namespace TrustedUninstaller.Shared.Parser
                 return false;
             }
 
-
             switch (nodeEvent?.Tag.Value)
             {
                 case "!file:":
@@ -26,27 +25,27 @@ namespace TrustedUninstaller.Shared.Parser
                 case "!service:":
                     currentType = typeof(ServiceAction);
                     return true;
-                case "!user:":
-                    currentType = typeof(UserAction);
-                    return true;
+                //case "!user:":
+                //    currentType = typeof(UserAction);
+                //    return true;
                 case "!run:":
                     currentType = typeof(RunAction);
                     return true;
                 case "!powerShell:":
                     currentType = typeof(PowerShellAction);
                     return true;
-                case "!shortcut:":
-                    currentType = typeof(ShortcutAction);
-                    return true;
+                //case "!shortcut:":
+                //    currentType = typeof(ShortcutAction);
+                //    return true;
                 case "!cmd:":
                     currentType = typeof(CmdAction);
                     return true;
                 case "!scheduledTask:":
                     currentType = typeof(ScheduledTaskAction);
                     return true;
-                case "!lineInFile:":
-                    currentType = typeof(LineInFileAction);
-                    return true;
+                //case "!lineInFile:":
+                //    currentType = typeof(LineInFileAction);
+                //    return true;
                 case "!registryKey:":
                     currentType = typeof(RegistryKeyAction);
                     return true;
@@ -62,10 +61,19 @@ namespace TrustedUninstaller.Shared.Parser
                 case "!taskKill:":
                     currentType = typeof(TaskKillAction);
                     return true;
-                case "!update:":
-                    currentType = typeof(UpdateAction);
+                case "!software:":
+                    currentType = typeof(SoftwareAction);
                     return true;
+                case "!download:":
+                    currentType = typeof(DownloadAction);
+                    return true;
+                //case "!update:":
+                //    currentType = typeof(UpdateAction);
+                //    return true;
                 case "!writeStatus:":
+                    currentType = typeof(WriteStatusAction);
+                    return true;
+                case "!status:":
                     currentType = typeof(WriteStatusAction);
                     return true;
                 case "!task:":

@@ -11,6 +11,12 @@ namespace TrustedUninstaller.Shared.Actions
         [YamlMember(typeof(string), Alias = "path")]
         public string Path { get; set; }
         
+        
+        [YamlMember(typeof(ISOSetting), Alias = "iso")]
+        public override ISOSetting ISO { get; set; } = ISOSetting.True;
+        [YamlMember(typeof(OOBESetting?), Alias = "oobe")]
+        public override OOBESetting? OOBE { get; set; } = OOBESetting.True;
+        
         public void RunTaskOnMainThread(Output.OutputWriter output) => throw new NotImplementedException();
         private bool InProgress { get; set; }
         public void ResetProgress() => InProgress = false;

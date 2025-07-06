@@ -19,11 +19,14 @@ namespace TrustedUninstaller.Shared.Tasks
 #nullable enable
         public string? Description { get; set; }
 
-        public int? MinVersion { get; set; }
-        public int? MaxVersion { get; set; }
 #nullable disable
-        public UninstallTaskStatus Status { get; set; } = UninstallTaskStatus.ToDo;
         
+        
+        [YamlMember(typeof(ISOSetting), Alias = "iso")]
+        public virtual ISOSetting ISO { get; set; } = ISOSetting.True;
+        
+        [YamlMember(typeof(OOBESetting?), Alias = "oobe")]
+        public virtual OOBESetting? OOBE { get; set; } = OOBESetting.True;
         public List<ITaskAction> Actions { get; set; } = new List<ITaskAction>();
 
         public int Priority { get; set; } = 1;
@@ -31,6 +34,7 @@ namespace TrustedUninstaller.Shared.Tasks
 
         [YamlMember(typeof(string), Alias = "option")]
         public string Option { get; set; } = null;
+        
         [YamlMember(typeof(string[]), Alias = "options")]
         public string[] Options { get; set; } = null;
         [YamlMember(typeof(string[]), Alias = "builds")]

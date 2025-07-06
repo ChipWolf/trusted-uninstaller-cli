@@ -1,12 +1,14 @@
 ﻿using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.ServiceProcess;
@@ -20,7 +22,10 @@ using Core;
 using Core.Actions;
 using Core.Exceptions;
 using Interprocess;
+using iso_mode;
 using JetBrains.Annotations;
+using ManagedWimLib;
+using Microsoft.Wim;
 using Microsoft.Win32;
 using TrustedUninstaller.Shared.Actions;
 using TrustedUninstaller.Shared.Exceptions;
@@ -29,8 +34,12 @@ using TrustedUninstaller.Shared.Tasks;
 using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 using RegistryKeyAction = TrustedUninstaller.Shared.Actions.RegistryKeyAction;
+using RegistryValueAction = Core.Actions.RegistryValueAction;
+using RegistryValueType = TrustedUninstaller.Shared.Actions.RegistryValueType;
+using RunAction = TrustedUninstaller.Shared.Actions.RunAction;
 using TaskAction = TrustedUninstaller.Shared.Tasks.TaskAction;
 using UninstallTaskStatus = TrustedUninstaller.Shared.Tasks.UninstallTaskStatus;
+using Win32 = Core.Win32;
 
 namespace TrustedUninstaller.Shared
 {
@@ -47,6 +56,12 @@ namespace TrustedUninstaller.Shared
         public static readonly List<string> ErrorDisplayList = new List<string>();
 
         public static int GetProgressMaximum(List<ITaskAction> actions) => actions.Sum(action => action.GetProgressWeight());
+
+        public static bool LiveISO = false;
+        public static bool ISO = false;
+        public static string ISOGuid;
+        public static string WimPath;
+        public static WimWrapper WimInstance;
 
         private static bool IsApplicable([CanBeNull] Playbook upgradingFrom, bool? onUpgrade, [CanBeNull] string[] onUpgradeVersions, [CanBeNull] string option)
         {
@@ -83,7 +98,7 @@ namespace TrustedUninstaller.Shared
         }
         
         [CanBeNull]
-        public static List<ITaskAction> ParseActions(string configPath, List<string> options, string file, [CanBeNull] Playbook upgradingFrom)
+        public static List<ITaskAction> ParseActions(string configPath, [CanBeNull] string isoBuild, [CanBeNull] string isoUpdateBuild, Architecture? isoArch, List<string> options, string file, [CanBeNull] Playbook upgradingFrom)
         {
             var returnExceptionMessage = string.Empty;
             try
@@ -94,16 +109,21 @@ namespace TrustedUninstaller.Shared
                 var configData = File.ReadAllText(Path.Combine(configPath, file));
                 var task = PlaybookParser.Deserializer.Deserialize<UninstallTask>(configData);
 
+                //if (task.ISO == ISOSetting.Only && task.OOBE == OOBESetting.Only)
+                //    throw new SerializationException($"Cannot have both ISO and OOBE set to only on task.");
+                
                 if ((!IsApplicable(upgradingFrom, task.OnUpgrade, task.OnUpgradeVersions, task.PreviousOption ?? task.Option) || 
-                        !IsApplicableOption(task.Option, Playbook.Options) || !IsApplicableArch(task.Arch)) ||
+                        !IsApplicableOption(task.Option, Playbook.Options) || !IsApplicableArch(task.Arch, ISO ? isoArch?.ToString() : null)) ||
                     (task.Builds != null && (
-                        !task.Builds.Where(build => !build.StartsWith("!")).Any(build => IsApplicableWindowsVersion(build))
+                        !task.Builds.Where(build => !build.StartsWith("!")).Any(build => IsApplicableWindowsVersion(build, ISO, isoBuild, isoUpdateBuild))
                         ||
-                        task.Builds.Where(build => build.StartsWith("!")).Any(build => !IsApplicableWindowsVersion(build)))) ||
+                        task.Builds.Where(build => build.StartsWith("!")).Any(build => !IsApplicableWindowsVersion(build, ISO, isoBuild, isoUpdateBuild)))) ||
                     (task.Options != null && (
                         !task.Options.Where(option => !option.StartsWith("!")).Any(option => IsApplicableOption(option, Playbook.Options))
                         ||
-                        task.Options.Where(option => option.StartsWith("!")).Any(option => !IsApplicableOption(option, Playbook.Options)))))
+                        task.Options.Where(option => option.StartsWith("!")).Any(option => !IsApplicableOption(option, Playbook.Options)))) ||
+                    ((!LiveISO && task.OOBE == OOBESetting.Only && (!ISO || task.ISO != ISOSetting.Only)) || (LiveISO && (task.OOBE == OOBESetting.False || (task.OOBE == null && task.ISO == ISOSetting.True)))) ||
+                    ((!ISO && task.ISO == ISOSetting.Only && (!LiveISO || task.OOBE != OOBESetting.Only)) || (ISO && task.ISO == ISOSetting.False)))
                 {
                     return null;
                 }
@@ -113,16 +133,25 @@ namespace TrustedUninstaller.Shared
                 // ReSharper disable once PossibleInvalidCastExceptionInForeachLoop
                 foreach (Tasks.TaskAction taskAction in task.Actions)
                 {
+                    var isoCompatibilityError = taskAction.ISO != ISOSetting.False ? taskAction.IsISOCompatible() : null;
+                    if (isoCompatibilityError != null)
+                        throw new SerializationException(isoCompatibilityError);
+
+                    //if (taskAction.ISO == ISOSetting.Only && taskAction.OOBE == OOBESetting.Only)
+                    //    throw new SerializationException($"Cannot have both ISO and OOBE set to only on {taskAction.GetType().Name}.");
+                    
                     if ((!IsApplicable(upgradingFrom, taskAction.OnUpgrade, taskAction.OnUpgradeVersions, taskAction.PreviousOption ?? taskAction.Option) || 
-                            !IsApplicableOption(taskAction.Option, options) || !IsApplicableArch(taskAction.Arch)) ||
+                            !IsApplicableOption(taskAction.Option, options) || !IsApplicableArch(taskAction.Arch, ISO ? isoArch?.ToString() : null)) ||
                         (taskAction.Builds != null && (
-                            !taskAction.Builds.Where(build => !build.StartsWith("!")).Any(build => IsApplicableWindowsVersion(build))
+                            !taskAction.Builds.Where(build => !build.StartsWith("!")).Any(build => IsApplicableWindowsVersion(build, ISO, isoBuild, isoUpdateBuild))
                             ||
-                            taskAction.Builds.Where(build => build.StartsWith("!")).Any(build => !IsApplicableWindowsVersion(build)))) ||
+                            taskAction.Builds.Where(build => build.StartsWith("!")).Any(build => !IsApplicableWindowsVersion(build, ISO, isoBuild, isoUpdateBuild)))) ||
                         (taskAction.Options != null && (
                             !taskAction.Options.Where(option => !option.StartsWith("!")).Any(option => IsApplicableOption(option, Playbook.Options))
                             ||
-                            taskAction.Options.Where(option => option.StartsWith("!")).Any(option => !IsApplicableOption(option, Playbook.Options)))))
+                            taskAction.Options.Where(option => option.StartsWith("!")).Any(option => !IsApplicableOption(option, Playbook.Options)))) ||
+                        ((!LiveISO && taskAction.OOBE == OOBESetting.Only && (!ISO || taskAction.ISO != ISOSetting.Only)) || (LiveISO && (taskAction.OOBE == OOBESetting.False || (taskAction.OOBE == null && taskAction.ISO == ISOSetting.True)))) ||
+                        ((!ISO && taskAction.ISO == ISOSetting.Only && (!LiveISO || taskAction.OOBE != OOBESetting.Only)) || (ISO && taskAction.ISO == ISOSetting.False)))
                     {
                         continue;
                     }
@@ -133,7 +162,7 @@ namespace TrustedUninstaller.Shared
                             throw new FileNotFoundException("Could not find YAML file: " + taskTaskAction.Path);
                         try
                         {
-                            list.AddRange(ParseActions(configPath, options, taskTaskAction.Path, upgradingFrom) ?? new List<ITaskAction>());
+                            list.AddRange(ParseActions(configPath, isoBuild, isoUpdateBuild, isoArch, options, taskTaskAction.Path, upgradingFrom) ?? new List<ITaskAction>());
                         }
                         catch (Exception e)
                         {
@@ -155,7 +184,7 @@ namespace TrustedUninstaller.Shared
                         throw new FileNotFoundException("Could not find YAML file: " + childTask);
                     try
                     {
-                        list.AddRange(ParseActions(configPath, options, childTask, upgradingFrom) ?? new List<ITaskAction>());
+                        list.AddRange(ParseActions(configPath, isoBuild, isoUpdateBuild, isoArch, options, childTask, upgradingFrom) ?? new List<ITaskAction>());
                     }
                     catch (Exception e)
                     {
@@ -278,6 +307,8 @@ namespace TrustedUninstaller.Shared
                 int i = 0;
                 try
                 {
+                    if (!string.IsNullOrWhiteSpace(((Tasks.TaskAction)action).Status) && action.GetType() != typeof(WriteStatusAction))
+                        await new WriteStatusAction() { Status = ((Tasks.TaskAction)action).Status }.RunTask(writer);
                     do
                     {
                         if (i > 0)
@@ -432,10 +463,12 @@ namespace TrustedUninstaller.Shared
             public DateTime CreationTime { get; set; }
             public string ClientVersion { get; set; }
             public string WindowsVersion { get; set; }
+            public string SystemLanguage { get; set; }
             public string UserLanguage { get; set; }
             public Architecture Architecture { get; set; }
             public string SystemMemory { get; set; }
             public int SystemThreads { get; set; }
+            public string FreeSpace { get; set; }
             // ReSharper disable once MemberHidesStaticFromOuterClass
             public string Playbook { get; set; }
             public string Version { get; set; }
@@ -444,80 +477,752 @@ namespace TrustedUninstaller.Shared
             {
                 ClientVersion = Globals.CurrentVersion;
                 WindowsVersion = $"Windows {Win32.SystemInfoEx.WindowsVersion.MajorVersion} {Win32.SystemInfoEx.WindowsVersion.Edition} {Win32.SystemInfoEx.WindowsVersion.BuildNumber}.{Win32.SystemInfoEx.WindowsVersion.UpdateNumber}";
-                UserLanguage = CultureInfo.InstalledUICulture.ToString();
+                SystemLanguage = Win32.SystemInfoEx.GetSystemLanguage();
+                UserLanguage = Win32.SystemInfoEx.GetUserLanguage();
                 SystemMemory = StringUtils.HumanReadableBytes(Win32.SystemInfoEx.GetSystemMemoryInBytes());
                 SystemThreads = Environment.ProcessorCount;
+                FreeSpace = StringUtils.HumanReadableBytes(Win32.SystemInfoEx.GetFreeDiskSpaceInBytes());
                 Architecture = Win32.SystemInfoEx.SystemArchitecture;
                 CreationTime = DateTime.UtcNow;
             }
 
             public string Serialize(ISerializer serializer) => serializer.Serialize(this);
         }
+
+
+        private static void CreateWindowsSkeleton(string folder)
+        {
+            foreach (var directory in new []
+                     {
+                         @"Windows\System32\OOBE", @"Windows\TEMP", @"ProgramData\Microsoft\Windows", @"Program Files", @"Program Files (x86)",
+                         @"Users\Public\Documents", @"Users\Public\Downloads", @"Users\Public\Desktop", @"Users\Public\Libraries", @"Users\Public\Music", @"Users\Public\Videos", @"Users\Public\Pictures",
+                         @"Users\Default\Documents", @"Users\Default\Downloads", @"Users\Default\Desktop", @"Users\Default\Libraries", @"Users\Default\Music", @"Users\Default\Videos", @"Users\Default\Pictures",
+                         @"Users\Default\AppData\Roaming\Microsoft\Windows\Start Menu\Programs", @"Users\Default\AppData\Local\Microsoft", @"Users\Default\Desktop", @"Users\Default\Libraries", @"Users\Default\Music", @"Users\Default\Videos", @"Users\Default\Pictures"
+                     })
+            {
+                Directory.CreateDirectory(Path.Combine(folder, directory));
+                var realFolder = Path.Combine(Environment.GetEnvironmentVariable("SYSTEMDRIVE")!, folder);
+                if (!Directory.Exists(realFolder))
+                    continue;
+
+                Wrap.ExecuteSafe(() =>
+                {
+                    DirectoryInfo aclFolder = new DirectoryInfo(realFolder);
+                    do
+                    {
+                        var target = new DirectoryInfo(aclFolder.FullName.Replace(Environment.GetEnvironmentVariable("SYSTEMDRIVE")!, folder));
+                        target.SetAccessControl(aclFolder.GetAccessControl());
+                    } while ((aclFolder = aclFolder.Parent) != null);
+                }, true);
+            }
+        }
         
         [InterprocessMethod(Level.TrustedInstaller)]
-        public static async Task<bool> RunPlaybook(string playbookPath, string playbookName, string playbookVersion, string[] options, string logFolder, InterLink.InterProgress progress, [CanBeNull] InterLink.InterMessageReporter statusReporter, bool useKernelDriver)
+        public static async Task<bool> RunPlaybook(string playbookPath, bool verified, bool autoLogon, [CanBeNull] string username, [CanBeNull] string password, [CanBeNull] string adminPassword,
+            string playbookName, string playbookVersion, string[] options, string[] allOptions, string logFolder, InterLink.InterProgress progress, [CanBeNull] InterLink.InterMessageReporter statusReporter,
+            bool useKernelDriver) => await RunPlaybook(playbookPath, false, false, false, verified, autoLogon, username, password, adminPassword, false, null, null, null, null, null, playbookName, playbookVersion, options, allOptions, logFolder, progress, statusReporter, useKernelDriver);
+
+        
+        [InterprocessMethod(Level.TrustedInstaller)]
+        public static async Task<bool> RunPlaybook(string playbookPath, bool networkDrivers, bool graphicsDrivers, bool systemDrivers, bool verified, bool autoLogon, [CanBeNull] string username, [CanBeNull] string password, [CanBeNull] string adminPassword, bool esd, string isoDest, [CanBeNull] string isoPath, [CanBeNull] string isoBuild, [CanBeNull] string isoUpdateBuild, Architecture? isoArch, string playbookName, string playbookVersion, string[] options, string[] allOptions, string logFolder, InterLink.InterProgress progress, [CanBeNull] InterLink.InterMessageReporter statusReporter, bool useKernelDriver)
         {
             Log.LogFileOverride = Path.Combine(logFolder, "Log.yml");
             Log.MetadataSource = new PlaybookMetadata(options, playbookName, playbookVersion);
-            //Log.WriteMetadata(Path.Combine(logFolder, "Log.yml"));
+            
+            ISO = isoPath != null;
+            
+            WriteStatusAction.StatusReporter = statusReporter;
+            
+            if (ISO)
+                ThrowIfNotEnoughFreeSpace(isoPath, Path.GetTempPath());
 
             AmeliorationUtil.UseKernelDriver = useKernelDriver;
 
             AmeliorationUtil.Playbook = AmeliorationUtil.DeserializePlaybook(playbookPath);
             AmeliorationUtil.Playbook.Options = options?.ToList();
 
-            Playbook[] appliedPlaybooks = Playbook.GetAppliedPlaybooks();
-            Playbook upgradingFrom = Playbook.LastAppliedMatch(appliedPlaybooks);
-            if (upgradingFrom != null && (!Playbook.IsUpgradeApplicable(upgradingFrom.Version) && !(upgradingFrom.GetVersionNumber() <= Playbook.GetVersionNumber())))
-                upgradingFrom = null;
+            var extractedIso = Path.Combine(Path.GetTempPath(), "AME-ISO-" + Guid.NewGuid());
+            var mountGuidString = Guid.NewGuid().ToString().Replace("-", "").Replace("{", "").Replace("}", "");
+            var winMount = Path.Combine(Path.GetPathRoot(Path.GetTempPath()), "ISO-" + mountGuidString);
+            var wimMount = Path.Combine(Path.GetPathRoot(Path.GetTempPath()), "WIM-" + mountGuidString);
+            var wimStaging = Path.Combine(Path.GetPathRoot(Path.GetTempPath()), "TMP-" + mountGuidString);
             
-            List<ITaskAction> actions = ParseActions($"{Playbook.Path}\\Configuration", AmeliorationUtil.Playbook.Options, File.Exists($"{Playbook.Path}\\Configuration\\main.yml")  ? "main.yml" :  "custom.yml", upgradingFrom);
-            if (actions == null)
-                throw new SerializationException("No applicable tasks were found in the Playbook.");
-            
-            if (UseKernelDriver)
-            {
-                //Check if KPH is installed.
-                ServiceController service = ServiceController.GetDevices()
-                    .FirstOrDefault(s => s.DisplayName == "KProcessHacker2");
-                if (service == null)
+            if (ISO) {
+                await new WriteStatusAction() { Status = "Extracting Image" }.RunTask(Output.OutputWriter.Null);
+
+                var extractProgress = new Progress<decimal>(value =>
                 {
-                    //Installs KPH
-                    await WinUtil.RemoveProtectionAsync();
+                    if (value <= 100)
+                        progress.Report(value / 20);
+                });
+                if (isoPath != null)
+                    await iso_mode.ISO.WriteISO(isoPath, extractedIso, extractProgress);
+            }
+            bool unhooked = false;
+            try
+            {
+                if (ISO)
+                {
+                    await new WriteStatusAction() { Status = "Extracting WIM" }.RunTask(Output.OutputWriter.Null);
+
+                    try
+                    {
+                        Wim.GlobalInit("libwim-15.dll", InitFlags.None);
+                    }
+                    catch (InvalidOperationException e)
+                    {
+                        // Already initialized
+                    }
+
+                    if (Playbook.ISO?.DisableHardwareRequirements == true && File.Exists(Path.Combine(extractedIso, @"sources\boot.wim")))
+                    {
+                        using var bootWim = Wim.OpenWim(Path.Combine(extractedIso, @"sources\boot.wim"), OpenFlags.None);
+                        int image = bootWim.GetWimInfo().BootIndex == 0 ? 1 : (int)bootWim.GetWimInfo().BootIndex;
+                        var systemHivePath = Path.Combine(Path.GetTempPath(), "AME-BOOTWIM-" + ISOGuid, "SYSTEM");
+                        bootWim.ExtractPath(image, Path.GetDirectoryName(systemHivePath), @"Windows\System32\config\SYSTEM", ExtractFlags.NoPreserveDirStructure);
+                        if (Wrap.ExecuteSafe(() => WinUtil.RegistryManager.HookHive("BOOT-" + ISOGuid, systemHivePath), true) == null)
+                        {
+                            using (var labKey = Registry.Users.CreateSubKey("BOOT-" + ISOGuid + @"\Setup\LabConfig"))
+                            {
+                                labKey.SetValue("BypassRAMCheck", 1, RegistryValueKind.DWord);
+                                labKey.SetValue("BypassSecureBootCheck", 1, RegistryValueKind.DWord);
+                                labKey.SetValue("BypassCPUCheck", 1, RegistryValueKind.DWord);
+                                labKey.SetValue("BypassTPMCheck", 1, RegistryValueKind.DWord);
+                            }
+                            if (Wrap.ExecuteSafe(() => WinUtil.RegistryManager.UnhookHive("BOOT-" + ISOGuid), true) == null)
+                            {
+                                bootWim.UpdateImage(
+                                    image,
+                                    UpdateCommand.SetAdd(systemHivePath, @"Windows\System32\config\SYSTEM", null, AddFlags.None),
+                                    UpdateFlags.None);
+                                bootWim.Overwrite(WriteFlags.None, Wim.DefaultThreads);
+                            }
+                        }
+                    }
+                    if (Playbook.ISO?.DisableBitLocker == true)
+                    {
+                        Directory.CreateDirectory(Path.Combine(extractedIso, @"sources\$OEM$\$$\Panther"));
+                        File.WriteAllText(Path.Combine(extractedIso, @"sources\$OEM$\$$\Panther\unattend.xml"), ISOWIM.GenerateUnattendXml(isoArch switch
+                        {
+                            Architecture.X86 => "x86",
+                            Architecture.X64 => "amd64",
+                            Architecture.Arm => "arm",
+                            Architecture.Arm64 => "arm64",
+                        }, true, true));
+                    }
+
+                    var wimPath = Path.Combine(extractedIso, @"sources\install.wim");
+                    bool wimExists = File.Exists(wimPath);
+
+                    if (!wimExists)
+                    {
+                        using (var esdWim = WimWrapper.OpenWim(Path.Combine(extractedIso, @"sources\install.esd"))) {
+                            esdWim.WriteToWIM(Path.Combine(extractedIso, @"sources\install.wim"), wimStaging);
+                        }
+                        File.Delete(Path.Combine(extractedIso, @"sources\install.esd"));
+                    }
+
+                    WimInstance = WimWrapper.OpenWim(Path.Combine(extractedIso, @"sources\install.wim"));
+                    
+                    WimInstance.RemoveSuperfluousImages();
+                    WimInstance.WriteChanges();
+                    
+                    Directory.CreateDirectory(winMount);
+                    CreateWindowsSkeleton(winMount);
+                    //wim.ExtractImage(wim.GetWimInfo().BootIndex == 0 ? 1 : (int)wim.GetWimInfo().BootIndex, mountedWim, ExtractFlags.None);
+                    progress.Report(8);
+
+                    WimPath = winMount;
+                    ISOGuid = mountGuidString;
+                    
+                    if (Playbook.Requirements.Contains(Requirements.Requirement.DefenderDisabled))
+                    {
+                        var nameList = new List<string>();
+                        for (int i = 1; i <= WimInstance.ImageCount; i++)
+                        {
+                            nameList.Add(WimInstance.GetImageName(i));
+                        }
+
+                        for (int i = 1; i <= WimInstance.ImageCount; i++)
+                        {
+                            await new WriteStatusAction() { Status = "Mounting " + nameList[i - 1] }.RunTask(Output.OutputWriter.Null);
+                            
+                            Directory.CreateDirectory(wimMount);
+                            WimInstance.Mount(i, wimMount, wimStaging);
+
+                            try
+                            {
+                                await new WriteStatusAction() { Status = "Applying Defender Package" }.RunTask(Output.OutputWriter.Null);
+                                var cabPath = ExtractCab(isoArch ?? Architecture.X64);
+
+                                using var writer = new Output.OutputWriter("Run", Path.Combine(logFolder, "Output.txt"), Path.Combine(logFolder, "Log.yml"));
+                                writer.LogOptions.SourceOverride = "Run";
+                                var action = new RunAction()
+                                {
+                                    Exe = "DISM",
+                                    Arguments = $"/Image:\"{wimMount}\" /Add-Package /PackagePath:\"{cabPath}\" /NoRestart /IgnoreCheck",
+                                };
+                                action.RunTaskOnMainThread(writer);
+
+                                Wrap.ExecuteSafe(() => File.Delete(cabPath), true);
+
+                                if (action.ExitCode != 0 && action.ExitCode != 3010)
+                                    throw new Exception("Failed to apply Defender package.");
+                            }
+                            finally
+                            {
+                                WimInstance.Unmount();
+                            }
+                        }
+                    }
+                    
+                    //await new WriteStatusAction() { Status = "Mounting Amogus" }.RunTask(Output.OutputWriter.Null);
+                    
+                    //Thread.Sleep(TimeSpan.FromSeconds(100));
+                    
+                    WimInstance.MountHives(ISOGuid);
+                    
+                    await new Actions.RegistryValueAction()
+                    {
+                        KeyName = @"HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection",
+                        Value = "DisableRealtimeMonitoring",
+                        Data = 1,
+                        Type = RegistryValueType.REG_DWORD
+                    }.RunTask(Output.OutputWriter.Null);
+                    await new Actions.RegistryValueAction()
+                    {
+                        KeyName = @"HKLM\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection",
+                        Value = "DisableRealtimeMonitoring",
+                        Data = 1,
+                        Type = RegistryValueType.REG_DWORD
+                    }.RunTask(Output.OutputWriter.Null);
+                    
+                    if (Playbook.Requirements.Contains(Requirements.Requirement.DefenderToggled))
+                    {
+                        await new Actions.RegistryValueAction()
+                        {
+                            KeyName = @"HKLM\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection",
+                            Value = "DisableAsyncScanOnOpen",
+                            Data = 1,
+                            Type = RegistryValueType.REG_DWORD
+                        }.RunTask(Output.OutputWriter.Null);
+                        await new Actions.RegistryValueAction()
+                        {
+                            KeyName = @"HKLM\SOFTWARE\Microsoft\Windows Defender\SpyNet",
+                            Value = "SpyNetReporting",
+                            Data = 0,
+                            Type = RegistryValueType.REG_DWORD
+                        }.RunTask(Output.OutputWriter.Null);
+                        await new Actions.RegistryValueAction()
+                        {
+                            KeyName = @"HKLM\SOFTWARE\Microsoft\Windows Defender\SpyNet",
+                            Value = "SubmitSamplesConsent",
+                            Data = 0,
+                            Type = RegistryValueType.REG_DWORD
+                        }.RunTask(Output.OutputWriter.Null);
+                        await new Actions.RegistryValueAction()
+                        {
+                            KeyName = @"HKLM\SOFTWARE\Microsoft\Windows Defender\Features",
+                            Value = "TamperProtection",
+                            Data = 4,
+                            Type = RegistryValueType.REG_DWORD
+                        }.RunTask(Output.OutputWriter.Null);
+                    }
+                    
+                    /*
+                    using (var wimDumpKey = Registry.Users.CreateSubKey("HKLM-SOFTWARE-" + ISOGuid + @"\Microsoft\Windows\Windows Error Reporting\LocalDumps")) {
+                        wimDumpKey.SetValue("DumpType", 2, RegistryValueKind.DWord);
+                        wimDumpKey.SetValue("DumpFolder", @"C:\CrashDumps", RegistryValueKind.ExpandString);
+                    }
+                    */
+
+                    progress.Report(systemDrivers || graphicsDrivers || networkDrivers ? 10 : 20);
+                    
+                    CopyDirectory(Path.Combine(playbookPath), Path.Combine(WimPath, @"ProgramData\AME\OOBE\Playbook"));
+                    
+                    if (File.Exists(Path.Combine(WimPath, @"ProgramData\AME\OOBE\playbook.apbx")))
+                        File.Delete(Path.Combine(WimPath, @"ProgramData\AME\OOBE\playbook.apbx"));
+                    File.Move(Path.Combine(Directory.GetCurrentDirectory(), "oobe_playbook.apbx"), Path.Combine(WimPath, @"ProgramData\AME\OOBE\playbook.apbx"));
+
+                    XmlSerializer serializerIso = new XmlSerializer(typeof(ISO));
+                    using (XmlWriter writer = XmlWriter.Create(Path.Combine(extractedIso, @"iso.conf"), new XmlWriterSettings() {Indent = true}))
+                    {
+                        serializerIso.Serialize(writer, new ISO()
+                        {
+                            Name = Playbook.Name,
+                            Creator = Playbook.Username,
+                            UniqueId = Playbook.UniqueId,
+                            Version = Playbook.Version,
+                            WindowsVersion = isoBuild,
+                            WindowsUpdateVersion = isoUpdateBuild,
+                            Options = options ?? Array.Empty<string>(),
+                            BitLockerDisabled = Playbook.ISO?.DisableBitLocker ?? false,
+                            HardwareRequirementsDisabled = Playbook.ISO?.DisableHardwareRequirements ?? false,
+                            InternetRequired = Playbook.OOBE?.Internet == OOBE.InternetRequirementLevel.Force,
+                        });
+                    }
+                }
+
+                Playbook upgradingFrom = null;
+                if (!ISO)
+                {
+                    Playbook[] appliedPlaybooks = Playbook.GetAppliedPlaybooks();
+                    upgradingFrom = Playbook.LastAppliedMatch(appliedPlaybooks);
+                    if (upgradingFrom != null && (!Playbook.IsUpgradeApplicable(upgradingFrom.Version) && !(upgradingFrom.GetVersionNumber() <= Playbook.GetVersionNumber())))
+                        upgradingFrom = null;
+                }
+
+                List<ITaskAction> actions = ParseActions($"{Playbook.Path}\\Configuration", isoBuild, isoUpdateBuild, isoArch, Playbook.Options,
+                    File.Exists($"{Playbook.Path}\\Configuration\\main.yml") ? "main.yml" : "custom.yml",
+                    upgradingFrom);
+                if (actions == null)
+                    throw new SerializationException("No applicable tasks were found in the Playbook.");
+
+                bool errorOccurred = false;
+                if (ISO)
+                {
+                    if (Playbook.Software == null)
+                        Playbook.Software = Array.Empty<Playbook.Package>();
+                    
+                    Directory.CreateDirectory(Path.Combine(WimPath, @"ProgramData\AME\OOBE"));
+                    XmlSerializer serializerOobe = new XmlSerializer(typeof(OOBE));
+                    using (XmlWriter writer = XmlWriter.Create(Path.Combine(WimPath, @"ProgramData\AME\OOBE\oobe.conf"), new XmlWriterSettings() {Indent = true}))
+                    {
+                        serializerOobe.Serialize(writer, new OOBE()
+                        {
+                            Username = username,
+                            Password = password,
+                            AdminPassword = adminPassword,
+                            AdminUserEnabled = options.Contains("security-enhanced"),
+                            BulletPoints = Playbook.OOBE.BulletPoints.Select(x => new BulletPoint() {Icon = x.Icon, Title = x.Title, Description = x.Description}).ToList(),
+                            AutoLogon = autoLogon,
+                            Verified = verified,
+                            Options = options ?? Array.Empty<string>(),
+                            InternetRequirement = Playbook.OOBE.Internet,
+                            Software = Playbook.Software.Where(x => string.IsNullOrEmpty(x.Option) || IsApplicableOption(x.Option, Playbook.Options)).Select(x => new OOBESoftware()
+                            {
+                                Name = x.Name,
+                                Title = x.Title,
+                                Description = x.Description,
+                                IconPath = File.Exists(Path.Combine(Playbook.Path, "Images", x.Icon)) ? x.Icon : Directory.GetFiles(Path.Combine(Playbook.Path, "Images"), x.Icon).FirstOrDefault(file => file.StartsWith(x.Icon, StringComparison.OrdinalIgnoreCase)),
+                                IsDefaultWebBrowser = x.DefaultWebBrowser,
+                                Local = x.Local,
+                            }).ToList()
+                        });
+                    }
+                    try
+                    {
+
+                        if (systemDrivers || networkDrivers || graphicsDrivers)
+                        {
+                            await DriverManager.HandleDrivers(driversProgress => progress.Report((decimal)(driversProgress / 10) + 10), statusReporter, graphicsDrivers, networkDrivers, systemDrivers,
+                                "https://download.ameliorated.io/drivers.json",
+                                Environment.ExpandEnvironmentVariables(@"%PROGRAMDATA%\AME\DriverCache"), Path.Combine(WimPath, @"ProgramData\AME\OOBE\Drivers"));
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Log.EnqueueExceptionSafe(e);
+                        errorOccurred = true;
+                    }
+                }
+
+                if (UseKernelDriver)
+                {
+                    //Check if KPH is installed.
+                    ServiceController service = ServiceController.GetDevices()
+                        .FirstOrDefault(s => s.DisplayName == "KProcessHacker2");
+                    if (service == null)
+                    {
+                        //Installs KPH
+                        await WinUtil.RemoveProtectionAsync();
+                    }
+                }
+
+                var totalProgress = Math.Max(GetProgressMaximum(actions), 1);
+                var progressLeft = totalProgress;
+                Action<int> progressReport = addition =>
+                {
+                    progressLeft -= addition;
+                    var progressValue = 1 - ((decimal)progressLeft / totalProgress);
+                    if (isoPath != null)
+                        progressValue = progressValue * 0.75M;
+                    progress.Report(isoPath == null ? progressValue * 100 : 10 + (progressValue * 100));
+                };
+
+                WriteStatusAction.StatusReporter = statusReporter;
+
+                try
+                {
+                    Environment.SetEnvironmentVariable("OOBE", LiveISO ? "true" : "false", EnvironmentVariableTarget.Process);
+                    Environment.SetEnvironmentVariable("ISO", ISO ? "true" : "false", EnvironmentVariableTarget.Process);
+                    
+                    try
+                    {
+                        errorOccurred = await DoActions(actions, logFolder, progressReport);
+                    }
+                    finally
+                    {
+                        WinUtil.RegistryManager.UnhookUserHives();
+                    }
+
+                    //Check if the kernel driver is installed.
+                    //service = ServiceController.GetDevices()
+                    //.FirstOrDefault(s => s.DisplayName == "KProcessHacker2");
+                    if (UseKernelDriver)
+                    {
+                        //Remove Process Hacker's kernel driver.
+                        await WinUtil.UninstallDriver();
+
+                        CoreActions.SafeRun(new Core.Actions.RegistryKeyAction()
+                        {
+                            KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\KProcessHacker2",
+                        });
+                    }
+
+                    if (ISO)
+                    {
+                        progress.Report(85);
+                        await new WriteStatusAction() { Status = "Saving Image" }.RunTask(Output.OutputWriter.Null);
+                        
+                        await InjectOOBE();
+
+                        WimInstance.UnmountHives(ISOGuid, true);
+                        
+                        //await new WriteStatusAction() { Status = "Mounting AmogusXXX" }.RunTask(Output.OutputWriter.Null);
+                    
+                        //Thread.Sleep(TimeSpan.FromSeconds(60));
+                        unhooked = true;
+                        
+                        foreach (string directory in Directory.GetDirectories(winMount))
+                        {
+                            // We can't use AddTree on root directory because it messes up wim image name and other properties :(
+                            WimInstance.AddTree(directory, @"\" + Path.GetFileName(directory));
+                        }
+                        
+                        if (!esd)
+                            WimInstance.WriteToWIM(Path.Combine(extractedIso, @"sources\install.wim"), wimStaging);
+                        else
+                        {
+                            WimInstance.WriteToESD(Path.Combine(extractedIso, @"sources\install.esd"));
+                            WimInstance.Dispose();
+                            File.Delete(Path.Combine(extractedIso, @"sources\install.wim"));
+                        }
+                        progress.Report(96);
+                        await new WriteStatusAction() { Status = "Cleaning WIM" }.RunTask(Output.OutputWriter.Null);
+   
+                        Wrap.ExecuteSafe(() => Directory.Delete(WimPath, true), true);
+                        progress.Report(97);
+
+                        await new WriteStatusAction() { Status = "Creating ISO" }.RunTask(Output.OutputWriter.Null);
+                        
+                        var runAction = new RunAction()
+                        {
+                            HandleExitCodes = new Dictionary<string, TaskAction.ExitCodeAction>() {{"!0", TaskAction.ExitCodeAction.Error}},
+                            BaseDir = true,
+                            Exe = "mkisofs.exe",
+                            Arguments =
+                                $@"-iso-level 4 -l -R -UDF -D -volid ""ISO"" -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -hide boot.catalog -eltorito-alt-boot -eltorito-platform efi -no-emul-boot -b efi/microsoft/boot/efisys.bin -o ""{isoDest}"" ""{extractedIso}"""
+                        };
+                        using var writer = new Output.OutputWriter("ISO Creator", Path.Combine(logFolder, "Output.txt"), Path.Combine(logFolder, "Log.yml"));
+                        writer.LogOptions.SourceOverride = "ISO Creator";
+                        
+                        runAction.RunTaskOnMainThread(writer);
+                        
+                        progress.Report(98);
+                        
+                        await new WriteStatusAction() { Status = "Cleaning Up" }.RunTask(Output.OutputWriter.Null);
+                    }
+
+                    return errorOccurred;
+                }
+                catch (Exception e)
+                {
+                    if (!ISO)
+                    {
+                        Wrap.ExecuteSafe(() =>
+                        {
+                            WriteAppliedPlaybook(playbookPath, ISO ? Registry.Users.OpenSubKey("HKLM-" + mountGuidString) : null, ISO ? WimPath : null, Playbook.UniqueId, Playbook.Name, Playbook.Username,
+                                Playbook.Overhaul, Playbook.Version, options ?? Array.Empty<string>(), allOptions, true, true, verified);   
+                        }, true);
+                    }
+                    throw;
+                }
+                
+            }
+            finally
+            {
+                if (ISO)
+                {
+                    if (!unhooked)
+                        Wrap.ExecuteSafe(() => WimInstance.UnmountHives(ISOGuid), true);
+                    
+                    WimInstance?.Dispose();
+
+                    if (Directory.Exists(WimPath))
+                    {
+                        Wrap.ExecuteSafe(() => Directory.Delete(WimPath));
+                        
+                        Wrap.ExecuteSafe(() =>
+                        {
+                            DirectoryInfo dir = new DirectoryInfo(WimPath);
+                            foreach (FileInfo file in dir.GetFiles("*", SearchOption.AllDirectories))
+                                Wrap.ExecuteSafe(() => file.Attributes = FileAttributes.Normal);
+                            foreach (DirectoryInfo subDir in dir.GetDirectories("*", SearchOption.AllDirectories))
+                                Wrap.ExecuteSafe(() => subDir.Attributes = FileAttributes.Normal);
+                            Wrap.ExecuteSafe(() => dir.Attributes = FileAttributes.Normal);
+                        });
+                        
+                        Wrap.ExecuteSafe(() => Directory.Delete(WimPath, true));
+                    }
+                    if (Directory.Exists(wimMount))
+                    {
+                        Wrap.ExecuteSafe(() => Directory.Delete(wimMount));
+                        
+                        Wrap.ExecuteSafe(() =>
+                        {
+                            DirectoryInfo dir = new DirectoryInfo(wimMount);
+                            foreach (FileInfo file in dir.GetFiles("*", SearchOption.AllDirectories))
+                                Wrap.ExecuteSafe(() => file.Attributes = FileAttributes.Normal);
+                            foreach (DirectoryInfo subDir in dir.GetDirectories("*", SearchOption.AllDirectories))
+                                Wrap.ExecuteSafe(() => subDir.Attributes = FileAttributes.Normal);
+                            Wrap.ExecuteSafe(() => dir.Attributes = FileAttributes.Normal);
+                        });
+                        
+                        Wrap.ExecuteSafe(() => Directory.Delete(wimMount, true));
+                    }
+                    if (Directory.Exists(wimStaging))
+                    {
+                        Wrap.ExecuteSafe(() => Directory.Delete(wimStaging));
+                        
+                        Wrap.ExecuteSafe(() =>
+                        {
+                            DirectoryInfo dir = new DirectoryInfo(wimStaging);
+                            foreach (FileInfo file in dir.GetFiles("*", SearchOption.AllDirectories))
+                                Wrap.ExecuteSafe(() => file.Attributes = FileAttributes.Normal);
+                            foreach (DirectoryInfo subDir in dir.GetDirectories("*", SearchOption.AllDirectories))
+                                Wrap.ExecuteSafe(() => subDir.Attributes = FileAttributes.Normal);
+                            Wrap.ExecuteSafe(() => dir.Attributes = FileAttributes.Normal);
+                        });
+                        
+                        Wrap.ExecuteSafe(() => Directory.Delete(wimStaging, true));
+                    }
+                    Wrap.ExecuteSafe(() => Directory.Delete(extractedIso, true), true);
                 }
             }
+        }
 
-            var totalProgress = Math.Max(AmeliorationUtil.GetProgressMaximum(actions), 1);
-            var progressLeft = totalProgress;
-            Action<int> progressReport = addition =>
+        private static async Task InjectOOBE()
+        {
+            string destination = Path.Combine(WimPath, @"ProgramData\AME\OOBE\OOBE.exe");
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.AME.Client.exe"))
             {
-                progressLeft -= addition;
-                var progressValue = 1 - ((decimal)progressLeft / totalProgress);
-                progress.Report(progressValue * 100);
-            };
+                byte[] buffer = new byte[stream!.Length];
+                stream.Read(buffer, 0, buffer.Length);
+                File.WriteAllBytes(destination, buffer);
+            }
+            destination = Path.Combine(WimPath, @"Windows\system32\OOBE\msoobe.exe");
+            
+            WimInstance.MoveFileOrFolder(@"Windows\system32\OOBE\msoobe.exe", @"Windows\system32\OOBE\msoobeext.exe");
+            
+            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.oobe_shim.exe"))
+            {
+                byte[] buffer = new byte[stream!.Length];
+                stream.Read(buffer, 0, buffer.Length);
+                File.WriteAllBytes(destination, buffer);
+            }
+            
+            await new Actions.RegistryValueAction()
+            {
+                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
+                Value = "DisplayName",
+                Data = "AME OOBE",
+                Type = RegistryValueType.REG_SZ
+            }.RunTask(Output.OutputWriter.Null);
+            await new Actions.RegistryValueAction()
+            {
+                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
+                Value = "ObjectName",
+                Data = "LocalSystem",
+                Type = RegistryValueType.REG_SZ
+            }.RunTask(Output.OutputWriter.Null);
+            await new Actions.RegistryValueAction()
+            {
+                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
+                Value = "ImagePath",
+                Data = "\"%ProgramData%\\AME\\OOBE\\OOBE.exe\" --service",
+                Type = RegistryValueType.REG_EXPAND_SZ
+            }.RunTask(Output.OutputWriter.Null);
+            await new Actions.RegistryValueAction()
+            {
+                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
+                Value = "ErrorControl",
+                Data = 0,
+                Type = RegistryValueType.REG_DWORD
+            }.RunTask(Output.OutputWriter.Null);         
+            await new Actions.RegistryValueAction()
+            {
+                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
+                Value = "Start",
+                Data = 2,
+                Type = RegistryValueType.REG_DWORD
+            }.RunTask(Output.OutputWriter.Null);
+            await new Actions.RegistryValueAction()
+            {
+                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
+                Value = "Type",
+                Data = 16,
+                Type = RegistryValueType.REG_DWORD
+            }.RunTask(Output.OutputWriter.Null);
+        }
+        
+        private static string ExtractCab(Architecture arch)
+        {
+            var cabArch = arch == Architecture.Arm || arch == Architecture.Arm64 ? "arm64" : "amd64";
+            
+            var fileDir = Environment.ExpandEnvironmentVariables("%ProgramData%\\AME");
+            if (!Directory.Exists(fileDir)) Directory.CreateDirectory(fileDir);
 
-            WriteStatusAction.StatusReporter = statusReporter;
+            var destination = Path.Combine(fileDir, $"Z-AME-NoDefender-Package31bf3856ad364e35{cabArch}1.0.0.0.cab");
 
-            bool errorOccurred = await DoActions(actions, logFolder, progressReport);
-
-            WinUtil.RegistryManager.UnhookUserHives();
-
-            //Check if the kernel driver is installed.
-            //service = ServiceController.GetDevices()
-                //.FirstOrDefault(s => s.DisplayName == "KProcessHacker2");
-            if (UseKernelDriver)
-            { 
-                //Remove Process Hacker's kernel driver.
-                await WinUtil.UninstallDriver();
-                
-                CoreActions.SafeRun(new Core.Actions.RegistryKeyAction()
-                {
-                    KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\KProcessHacker2",
-                });
+            if (File.Exists(destination))
+            {
+                return destination;
             }
 
-            return errorOccurred;
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.Z-AME-NoDefender-Package31bf3856ad364e35{cabArch}1.0.0.0.cab"))
+            {
+                byte[] buffer = new byte[stream!.Length];
+                stream.Read(buffer, 0, buffer.Length);
+                File.WriteAllBytes(destination, buffer);
+            }
+            return destination;
         }
+        
+        private static int RunPSCommand(string command, [CanBeNull] DataReceivedEventHandler outputHandler, [CanBeNull] DataReceivedEventHandler errorHandler) =>
+            RunCommand("powershell.exe", $"-NoP -C \"{command}\"", outputHandler, errorHandler);
+        private static int RunCommand(string exe, string arguments, [CanBeNull] DataReceivedEventHandler outputHandler, [CanBeNull] DataReceivedEventHandler errorHandler)
+        {
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo()
+                {
+                    FileName = exe,
+                    Arguments = arguments,
+
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = outputHandler != null,
+                    RedirectStandardError = errorHandler != null
+                }
+            };
+
+            if (outputHandler != null)
+                process.OutputDataReceived += outputHandler;
+            if (errorHandler != null)
+                process.ErrorDataReceived += errorHandler;
+
+            process.Start();
+            
+            if (outputHandler != null)
+                process.BeginOutputReadLine();
+            if (errorHandler != null)
+                process.BeginErrorReadLine();
+
+            process.WaitForExit();
+            return process.ExitCode;
+        }
+        
+        static void ThrowIfNotEnoughFreeSpace(string isoPath, string destination)
+        {
+            if (!File.Exists(isoPath))
+                throw new FileNotFoundException($"The file '{isoPath}' does not exist.");
+
+            long fileSize = new FileInfo(isoPath).Length * 4;
+
+            DriveInfo tempDrive = new DriveInfo(Path.GetPathRoot(destination));
+            long freeSpace = tempDrive.AvailableFreeSpace;
+
+            if (freeSpace < fileSize)
+                throw new IOException($"Not enough free space on the drive. Required: {fileSize} bytes, Available: {freeSpace} bytes.");
+        }
+        
+        private static void DeleteAppliedPlaybook(string folderName)
+        {
+            var appliedDir = Environment.ExpandEnvironmentVariables(@"%ProgramData%\AME\AppliedPlaybooks");
+            if (Directory.Exists(Path.Combine(appliedDir, folderName)))
+                Directory.Delete(Path.Combine(appliedDir, folderName), true);
+        }
+        
+        private static void WriteAppliedPlaybook(string playbookPath, [CanBeNull] RegistryKey rootKey, [CanBeNull] string ameRoot, Guid? uniqueId, string name, string username, bool overhaul, string version, [NotNull] string[] selectedOptions, [NotNull] string[] allOptions, bool hadErrors, bool fatalError, bool isVerified)
+        {
+            try
+            {
+                if (uniqueId != null)
+                {
+                    using var key = (rootKey ?? Registry.LocalMachine).CreateSubKey(@$"SOFTWARE\AME\Playbooks\Applied\{{{uniqueId.Value.ToString().ToUpper()}}}", true);
+                    key.SetValue("Name", name, RegistryValueKind.String);
+                    key.SetValue("Username", username, RegistryValueKind.String);
+                    key.SetValue("Overhaul", overhaul ? 1 : 0, RegistryValueKind.DWord);
+                    key.SetValue("Version", version, RegistryValueKind.String);
+                    key.SetValue("ErrorLevel", hadErrors ? fatalError ? 2 : 1 : 0, RegistryValueKind.DWord);
+                    key.SetValue("AvailableOptions", allOptions, RegistryValueKind.MultiString);
+                    key.SetValue("SelectedOptions", selectedOptions, RegistryValueKind.MultiString);
+                    key.SetValue("AppliedTimeUTC", DateTime.UtcNow.ToBinary(), RegistryValueKind.QWord);
+                    if (File.Exists(Path.Combine(playbookPath, "playbook.png")))
+                        key.SetValue("Image", File.ReadAllBytes(Path.Combine(playbookPath, "playbook.png")), RegistryValueKind.Binary);
+                    else if (File.Exists(Path.Combine(playbookPath, "Images\\playbook.png")))
+                        key.SetValue("Image", File.ReadAllBytes(Path.Combine(playbookPath, "Images\\playbook.png")), RegistryValueKind.Binary);
+                }
+                else
+                {
+                    var parent = Directory.CreateDirectory(ameRoot != null ? Path.Combine(ameRoot, "AppliedPlaybooks") : Environment.ExpandEnvironmentVariables(@"%ProgramData%\AME\AppliedPlaybooks"));
+                    var indexes = parent.GetDirectories().Where(v => int.TryParse(v.Name, out _)).Select(v => int.Parse(v.Name)).ToList();
+
+                    var currentIndex = indexes.Count > 0 ? indexes.Max() : 0;
+                    if (currentIndex >= 10)
+                        Wrap.ExecuteSafe(() => parent.GetDirectories().First().Delete(true), true);
+
+                    var target = parent.CreateSubdirectory((currentIndex + 1).ToString());
+
+                    if (File.Exists(Path.Combine(playbookPath, "playbook.png")))
+                        File.Copy(Path.Combine(playbookPath, "playbook.png"), Path.Combine(target.FullName, "playbook.png"));
+                    else if (File.Exists(Path.Combine(playbookPath, "Images\\playbook.png")))
+                        File.Copy(Path.Combine(playbookPath, "Images\\playbook.png"), Path.Combine(target.FullName, "playbook.png"));
+
+                    File.Copy(Path.Combine(playbookPath, "playbook.conf"), Path.Combine(target.FullName, "playbook.conf"));
+                    if (hadErrors)
+                        File.Create(Path.Combine(target.FullName, "errors.txt")).Close();
+                    if (isVerified)
+                        File.Create(Path.Combine(target.FullName, "verified.txt")).Close();
+                }
+            }
+            catch (Exception e)
+            {
+                Log.EnqueueExceptionSafe(LogType.Warning, e);
+            }
+        }
+        
+        static void CopyDirectory(string sourceDir, string destDir)
+        {
+            if (!Directory.Exists(destDir))
+                Directory.CreateDirectory(destDir);
+
+            foreach (string file in Directory.GetFiles(sourceDir))
+            {
+                string destFile = Path.Combine(destDir, Path.GetFileName(file));
+                File.Copy(file, destFile, true);
+            }
+
+            foreach (string subDir in Directory.GetDirectories(sourceDir))
+            {
+                string newDestSubDir = Path.Combine(destDir, Path.GetFileName(subDir));
+                CopyDirectory(subDir, newDestSubDir);
+            }
+        }
+        
         public static async Task DownloadLanguagesAsync(IEnumerable<string> langsSelected)
         {
 
@@ -691,7 +1396,7 @@ namespace TrustedUninstaller.Shared
 
         private static bool IsApplicableUpgrade(string oldVersion, string allowedVersion)
         {
-            var oldVersionNumber = Playbook.GetVersionNumber(oldVersion);
+            var oldVersionNumber = VersionNumber.GetVersionNumber(oldVersion);
             var version = allowedVersion;
             bool negative = false;
             if (version.StartsWith("!"))
@@ -703,31 +1408,31 @@ namespace TrustedUninstaller.Shared
 
             if (version.StartsWith(">="))
             {
-                var parsed = Playbook.GetVersionNumber(version.Substring(2));
+                var parsed = VersionNumber.GetVersionNumber(version.Substring(2));
                 if (oldVersionNumber >= parsed)
                     result = true;
             }
             else if (version.StartsWith("<="))
             {
-                var parsed = Playbook.GetVersionNumber(version.Substring(2));
+                var parsed = VersionNumber.GetVersionNumber(version.Substring(2));
                 if (oldVersionNumber <= parsed)
                     result = true;
             }
             else if (version.StartsWith(">"))
             {
-                var parsed = Playbook.GetVersionNumber(version.Substring(1));
+                var parsed = VersionNumber.GetVersionNumber(version.Substring(1));
                 if (oldVersionNumber > parsed)
                     result = true;
             }
             else if (version.StartsWith("<"))
             {
-                var parsed = Playbook.GetVersionNumber(version.Substring(1));
+                var parsed = VersionNumber.GetVersionNumber(version.Substring(1));
                 if (oldVersionNumber < parsed)
                     result = true;
             }
             else
             {
-                var parsed = Playbook.GetVersionNumber(version);
+                var parsed = VersionNumber.GetVersionNumber(version);
                 if (oldVersionNumber == parsed)
                     result = true;
             }
@@ -735,7 +1440,7 @@ namespace TrustedUninstaller.Shared
             return negative ? !result : result;
         }
         
-        private static bool IsApplicableWindowsVersion(string version)
+        public static bool IsApplicableWindowsVersion(string version, bool ISO, [CanBeNull] string targetISOVersion = null, [CanBeNull] string targetISOUpdateVersion = null)
         {
             bool negative = false;
             if (version.StartsWith("!"))
@@ -746,7 +1451,17 @@ namespace TrustedUninstaller.Shared
             bool result = false;
 
             bool compareUpdateBuild = version.Contains(".");
-            var currentBuild = decimal.Parse(compareUpdateBuild ? Win32.SystemInfoEx.WindowsVersion.BuildNumber + "." + Win32.SystemInfoEx.WindowsVersion.UpdateNumber : Win32.SystemInfoEx.WindowsVersion.BuildNumber.ToString(), CultureInfo.InvariantCulture);
+            if ((ISO && targetISOUpdateVersion == null) && compareUpdateBuild)
+                version = version.Split('.').First();
+            decimal currentBuild;
+            if (ISO)
+            {
+                if (targetISOVersion != null)
+                    currentBuild = decimal.Parse(targetISOUpdateVersion == null ? targetISOVersion : targetISOVersion + "." + targetISOUpdateVersion, CultureInfo.InvariantCulture);
+                else
+                    return false;
+            } else
+                currentBuild = decimal.Parse(compareUpdateBuild ? Win32.SystemInfoEx.WindowsVersion.BuildNumber + "." + Win32.SystemInfoEx.WindowsVersion.UpdateNumber : Win32.SystemInfoEx.WindowsVersion.BuildNumber.ToString(), CultureInfo.InvariantCulture);
 
             if (version.StartsWith(">="))
             {
@@ -810,11 +1525,11 @@ namespace TrustedUninstaller.Shared
             return negative ? !result : result;
         }
         
-        private static bool IsApplicableArch(string arch)
+        private static bool IsApplicableArch(string arch, [CanBeNull] string isoArch)
         {
             if (String.IsNullOrEmpty(arch))
                 return true;
-            
+
             bool negative = false;
             if (arch.StartsWith("!"))
             {
@@ -822,7 +1537,8 @@ namespace TrustedUninstaller.Shared
                 negative = true;
             }
 
-            var result = String.Equals(arch, Win32.SystemInfoEx.SystemArchitecture.ToString(), StringComparison.OrdinalIgnoreCase);
+            var result = String.Equals(arch, isoArch ?? Win32.SystemInfoEx.SystemArchitecture.ToString(), StringComparison.OrdinalIgnoreCase);
+            
 
             return negative ? !result : result;
         }

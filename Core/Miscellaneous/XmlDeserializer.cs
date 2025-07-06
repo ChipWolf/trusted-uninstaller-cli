@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Xml;
 using System.Xml.Schema;
 using System.Xml.Serialization;
-using TrustedUninstaller.Shared;
 
 namespace Core.Miscellaneous
 {

@@ -5,7 +5,6 @@ using System.Runtime.Serialization;
 using System.Threading;
 using System.Xml;
 using System.Xml.Serialization;
-using Interprocess;
 
 namespace Core
 {

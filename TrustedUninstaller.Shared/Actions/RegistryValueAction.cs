@@ -86,13 +86,21 @@ namespace TrustedUninstaller.Shared.Actions
         
         public string ErrorString() => $"RegistryValueAction failed to {Operation.ToString().ToLower()} value '{Value}' in key '{KeyName}'";
         
-        private List<RegistryKey> GetRoots()
+        private List<RegistryKey> GetRoots(ref string subKey)
         {
             var hive = KeyName.Split('\\').GetValue(0).ToString().ToUpper();
             var list = new List<RegistryKey>();
 
             if (hive.Equals("HKCU") || hive.Equals("HKEY_CURRENT_USER"))
             {
+                if (AmeliorationUtil.ISO)
+                {
+                    if ((hive == "HKCU" || hive == "HKEY_CURRENT_USER") && subKey.StartsWith(@"Software\Classes", StringComparison.OrdinalIgnoreCase)) {
+                        subKey = GetSubKey(GetSubKey(subKey));
+                        return new List<RegistryKey>() { Registry.Users.OpenSubKey("HKCU_Classes-" + AmeliorationUtil.ISOGuid, true) };
+                    } else
+                        return new List<RegistryKey>() { Registry.Users.OpenSubKey("HKCU-" + AmeliorationUtil.ISOGuid, true) };
+                }
                 RegistryKey usersKey;
                 List<string> userKeys;
 
@@ -126,37 +134,69 @@ namespace TrustedUninstaller.Shared.Actions
                         return list;
                 }
             }
-            list.Add(hive switch
+            if (AmeliorationUtil.ISO)
             {
-                "HKCU" => RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default),
-                "HKEY_CURRENT_USER" => RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default),
-                "HKLM" => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Default),
-                "HKEY_LOCAL_MACHINE" => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Default),
-                "HKCR" => RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Default),
-                "HKEY_CLASSES_ROOT" => RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Default),
-                "HKU" => RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default),
-                "HKEY_USERS" => RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default),
-                _ => throw new ArgumentException($"Key '{KeyName}' does not specify a valid registry hive.")
-            });
+                if ((hive == "HKLM" || hive == "HKEY_LOCAL_MACHINE") && subKey.StartsWith(@"SAM\", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKLM-SAM-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+                if ((hive == "HKLM" || hive == "HKEY_LOCAL_MACHINE") && subKey.StartsWith(@"SECURITY\", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKLM-SECURITY-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+                if ((hive == "HKLM" || hive == "HKEY_LOCAL_MACHINE") && subKey.StartsWith(@"SOFTWARE\", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKLM-SOFTWARE-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+                if ((hive == "HKLM" || hive == "HKEY_LOCAL_MACHINE") && subKey.StartsWith(@"SYSTEM\CurrentControlSet\", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(GetSubKey(subKey));
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKLM-SYSTEM-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x + @"\ControlSet001", true)));
+                }
+                else if ((hive == "HKLM" || hive == "HKEY_LOCAL_MACHINE") && subKey.StartsWith(@"SYSTEM\", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKLM-SYSTEM-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+                if ((hive == "HKCR" || hive == "HKEY_CLASSES_ROOT")) {
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKLM-SOFTWARE-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x + @"\Classes", true)));
+                }
+                if ((hive == "HKU" || hive == "HKEY_USERS") && (subKey.StartsWith(@"S-1-5-18\", StringComparison.OrdinalIgnoreCase) || subKey.StartsWith(@".DEFAULT\", StringComparison.OrdinalIgnoreCase))) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKU-S-1-5-18-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+                if ((hive == "HKU" || hive == "HKEY_USERS") && subKey.StartsWith(@"S-1-5-19", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKU-S-1-5-19-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+                if ((hive == "HKU" || hive == "HKEY_USERS") && subKey.StartsWith(@"S-1-5-20", StringComparison.OrdinalIgnoreCase)) {
+                    subKey = GetSubKey(subKey);
+                    list.AddRange(Registry.Users.GetSubKeyNames().Where(x => x.StartsWith("HKU-S-1-5-20-" + AmeliorationUtil.ISOGuid)).Select(x => Registry.Users.OpenSubKey(x, true)));
+                }
+            }
+            else
+            {
+                list.Add(hive switch
+                {
+                    "HKCU" => RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default),
+                    "HKEY_CURRENT_USER" => RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default),
+                    "HKLM" => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Default),
+                    "HKEY_LOCAL_MACHINE" => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Default),
+                    "HKCR" => RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Default),
+                    "HKEY_CLASSES_ROOT" => RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Default),
+                    "HKU" => RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default),
+                    "HKEY_USERS" => RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default),
+                    _ => throw new ArgumentException($"Key '{KeyName}' does not specify a valid registry hive.")
+                });
+            }
             return list;
         }
 
-        public string GetSubKey() => KeyName.Substring(KeyName.IndexOf('\\') + 1);
+        public string GetSubKey(string key) => key.Replace("\\\\", "\\").Substring(key.IndexOf('\\') + 1);
 
-        private RegistryKey? OpenSubKey(RegistryKey root)
-        {
-            var subKeyPath = GetSubKey();
-            
-            if (subKeyPath == null) throw new ArgumentException($"Key '{KeyName}' is invalid.");
-            
-            return root.OpenSubKey(subKeyPath, true);
-        }
-
-        public object? GetCurrentValue(RegistryKey root)
-        {
-            var subkey = GetSubKey();
-            return Registry.GetValue(root.Name + "\\" + subkey, Value, null);
-        }
+        //public object? GetCurrentValue(RegistryKey root)
+        //{
+        //    var subkey = GetSubKey();
+        //    return Registry.GetValue(root.Name + "\\" + subkey, Value, null);
+        //}
         
         public static byte[] StringToByteArray(string hex) {
             return Enumerable.Range(0, hex.Length)
@@ -169,78 +209,86 @@ namespace TrustedUninstaller.Shared.Actions
         {
             try
             {
-                var roots = GetRoots();
+                var subKey = GetSubKey(KeyName);
+                var roots = GetRoots(ref subKey);
 
                 foreach (var _root in roots)
                 {
                     var root = _root;
-                    var subKey = GetSubKey();
-                    
-                    if (root.Name.Contains("AME_UserHive_") && subKey.StartsWith("SOFTWARE\\Classes", StringComparison.CurrentCultureIgnoreCase))
-                    {
-                        var usersKey = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
-
-                        root = usersKey.OpenSubKey(root.Name.Substring(11) + "_Classes", true);
-                        subKey = Regex.Replace(subKey, @"^SOFTWARE\\*Classes\\*", "", RegexOptions.IgnoreCase);
-
-                        if (root == null)
-                        {
-                            continue;
-                        }
-                    }
-                    
-                    var openedSubKey = root.OpenSubKey(subKey);
-
-                    if (openedSubKey == null && (Operation == RegistryValueOperation.Set || Operation == RegistryValueOperation.Delete))
-                        continue;
-                    if (openedSubKey == null) return UninstallTaskStatus.ToDo;
-
-                    var value = openedSubKey.GetValue(Value);
-
-                    if (value == null)
-                    {
-                        if (Operation == RegistryValueOperation.Set || Operation == RegistryValueOperation.Delete)
-                            continue;
-
-                        return UninstallTaskStatus.ToDo;
-                    }
-                    if (Operation == RegistryValueOperation.Delete) return UninstallTaskStatus.ToDo;
-
-                    if (Data == null) return UninstallTaskStatus.ToDo;
-
-
-                    bool matches;
                     try
                     {
-                        matches = Type switch
+                        if (root.Name.Contains("AME_UserHive_") && subKey.StartsWith("SOFTWARE\\Classes", StringComparison.CurrentCultureIgnoreCase))
                         {
-                            RegistryValueType.REG_SZ =>
-                                Data.ToString() == value.ToString(),
-                            RegistryValueType.REG_EXPAND_SZ =>
-                                // RegistryValueOptions.DoNotExpandEnvironmentNames above did not seem to work.
-                                Environment.ExpandEnvironmentVariables(Data.ToString()) == value.ToString(),
-                            RegistryValueType.REG_MULTI_SZ =>
-                                Data.ToString() == "" ?
-                                    ((string[])value).SequenceEqual(new string[] { }) :
-                                    ((string[])value).SequenceEqual(Data.ToString().Split(new string[] { "\\0" }, StringSplitOptions.None)),
-                            RegistryValueType.REG_DWORD =>
-                                unchecked((int)Convert.ToUInt32(Data)) == (int)value,
-                            RegistryValueType.REG_QWORD =>
-                                Convert.ToUInt64(Data) == (ulong)value,
-                            RegistryValueType.REG_BINARY =>
-                                ((byte[])value).SequenceEqual(StringToByteArray(Data.ToString())),
-                            RegistryValueType.REG_NONE =>
-                                ((byte[])value).SequenceEqual(new byte[0]),
-                            RegistryValueType.REG_UNKNOWN =>
-                                Data.ToString() == value.ToString(),
-                            _ => throw new ArgumentException("Impossible.")
-                        };
+                            var usersKey = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
+
+                            var name = root.Name.Substring(11) + "_Classes";
+                            root.Dispose();
+                            root = usersKey.OpenSubKey(name, true);
+                            subKey = Regex.Replace(subKey, @"^SOFTWARE\\*Classes\\*", "", RegexOptions.IgnoreCase);
+
+                            if (root == null)
+                            {
+                                continue;
+                            }
+                        }
+                    
+                        using var openedSubKey = root.OpenSubKey(subKey);
+
+                        if (openedSubKey == null && (Operation == RegistryValueOperation.Set || Operation == RegistryValueOperation.Delete))
+                            continue;
+                        if (openedSubKey == null) return UninstallTaskStatus.ToDo;
+
+                        var value = openedSubKey.GetValue(Value);
+
+                        if (value == null)
+                        {
+                            if (Operation == RegistryValueOperation.Set || Operation == RegistryValueOperation.Delete)
+                                continue;
+
+                            return UninstallTaskStatus.ToDo;
+                        }
+                        if (Operation == RegistryValueOperation.Delete) return UninstallTaskStatus.ToDo;
+
+                        if (Data == null) return UninstallTaskStatus.ToDo;
+
+
+                        bool matches;
+                        try
+                        {
+                            matches = Type switch
+                            {
+                                RegistryValueType.REG_SZ =>
+                                    Data.ToString() == value.ToString(),
+                                RegistryValueType.REG_EXPAND_SZ =>
+                                    // RegistryValueOptions.DoNotExpandEnvironmentNames above did not seem to work.
+                                    Environment.ExpandEnvironmentVariables(Data.ToString()) == value.ToString(),
+                                RegistryValueType.REG_MULTI_SZ =>
+                                    Data.ToString() == "" ?
+                                        ((string[])value).SequenceEqual(new string[] { }) :
+                                        ((string[])value).SequenceEqual(Data.ToString().Split(new string[] { "\\0" }, StringSplitOptions.None)),
+                                RegistryValueType.REG_DWORD =>
+                                    unchecked((int)Convert.ToUInt32(Data)) == (int)value,
+                                RegistryValueType.REG_QWORD =>
+                                    Convert.ToUInt64(Data) == (ulong)value,
+                                RegistryValueType.REG_BINARY =>
+                                    ((byte[])value).SequenceEqual(StringToByteArray(Data.ToString())),
+                                RegistryValueType.REG_NONE =>
+                                    ((byte[])value).SequenceEqual(new byte[0]),
+                                RegistryValueType.REG_UNKNOWN =>
+                                    Data.ToString() == value.ToString(),
+                                _ => throw new ArgumentException("Impossible.")
+                            };
+                        }
+                        catch (InvalidCastException)
+                        {
+                            matches = false;
+                        }
+                        if (!matches) return UninstallTaskStatus.ToDo;
                     }
-                    catch (InvalidCastException)
+                    finally
                     {
-                        matches = false;
+                        root?.Dispose();
                     }
-                    if (!matches) return UninstallTaskStatus.ToDo;
                 }
             }
             catch (Exception e)
@@ -254,110 +302,124 @@ namespace TrustedUninstaller.Shared.Actions
 
         public async Task<bool> RunTask(Output.OutputWriter output)
         {
-
             output.WriteLineSafe("Info", $"{Operation.ToString().TrimEnd('e')}ing value '{Value}' in key '{KeyName}'...");
             
-            var roots = GetRoots();
+            var subKey = GetSubKey(KeyName);
+            var roots = GetRoots(ref subKey);
 
             foreach (var _root in roots)
             {
                 var root = _root;
-                var subKey = GetSubKey();
                 try
                 {
-                    if (root.Name.Contains("AME_UserHive_") && subKey.StartsWith("SOFTWARE\\Classes", StringComparison.CurrentCultureIgnoreCase))
+                    try
                     {
-                        var usersKey = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
-
-                        root = usersKey.OpenSubKey(root.Name.Substring(11) + "_Classes", true);
-                        subKey = Regex.Replace(subKey, @"^SOFTWARE\\*Classes\\*", "", RegexOptions.IgnoreCase);
-
-                        if (root == null)
+                        if (root.Name.Contains("AME_UserHive_") && subKey.StartsWith("SOFTWARE\\Classes", StringComparison.CurrentCultureIgnoreCase))
                         {
-                            Log.WriteSafe(LogType.Warning, $"User classes hive not found for hive {_root.Name}.", new SerializableTrace(), output.LogOptions);
+                            var usersKey = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
+
+                            var name = (root.Name.Contains("AME_UserHive_Default") ? "AME_UserHive_Default" : root.Name.Substring(11)) + "_Classes";
+                            root.Dispose();
+                            root = usersKey.OpenSubKey(name, true);
+                            subKey = Regex.Replace(subKey, @"^SOFTWARE\\*Classes\\*", "", RegexOptions.IgnoreCase);
+
+                            if (root == null)
+                            {
+                                Log.WriteSafe(LogType.Warning, $"User classes hive not found: " + name, new SerializableTrace(), output.LogOptions);
+                                continue;
+                            }
+                        }
+
+                        //if (GetCurrentValue(root) == Data) continue;
+
+                        using (var openedKey = root.OpenSubKey(subKey))
+                        {
+                            if (openedKey == null && Operation == RegistryValueOperation.Set) continue;
+                            if (openedKey == null && Operation == RegistryValueOperation.Add)
+                            {
+                                using var _ = root.CreateSubKey(subKey);
+                            }
+                        }
+                        
+                        if (Operation == RegistryValueOperation.Delete)
+                        {
+                            using var key = root.OpenSubKey(subKey, true);
+                            key?.DeleteValue(Value, false);
                             continue;
                         }
-                    }
 
-                    if (GetCurrentValue(root) == Data) continue;
+                        if (Type == RegistryValueType.REG_BINARY)
+                        {
+                            var data = StringToByteArray(Data.ToString());
 
-                    if (root.OpenSubKey(subKey) == null && Operation == RegistryValueOperation.Set) continue;
-                    if (root.OpenSubKey(subKey) == null && Operation == RegistryValueOperation.Add) root.CreateSubKey(subKey);
+                            Registry.SetValue(root.Name + "\\" + subKey, Value, data, (RegistryValueKind)Type);
+                        }
+                        else if (Type == RegistryValueType.REG_DWORD)
+                        {
+                            // DWORD values using the highest bit set fail without this, for example '2962489444'.
+                            // See https://stackoverflow.com/questions/6608400/how-to-put-a-dword-in-the-registry-with-the-highest-bit-set;
+                            var value = unchecked((int)Convert.ToUInt32(Data));
+                            Registry.SetValue(root.Name + "\\" + subKey, Value, value, (RegistryValueKind)Type);
+                        }
+                        else if (Type == RegistryValueType.REG_QWORD)
+                        {
+                            Registry.SetValue(root.Name + "\\" + subKey, Value, Convert.ToUInt64(Data), (RegistryValueKind)Type);
+                        }
+                        else if (Type == RegistryValueType.REG_NONE)
+                        {
+                            byte[] none = new byte[0];
 
-                    if (Operation == RegistryValueOperation.Delete)
-                    {
-                        var key = root.OpenSubKey(subKey, true);
-                        key?.DeleteValue(Value);
-                        continue;
-                    }
+                            Registry.SetValue(root.Name + "\\" + subKey, Value, none, (RegistryValueKind)Type);
+                        }
+                        else if (Type == RegistryValueType.REG_MULTI_SZ)
+                        {
+                            string[] data;
+                            if (Data.ToString() == "") data = new string[] { };
+                            else data = Data.ToString().Split(new string[] { "\\0" }, StringSplitOptions.None);
 
-                    if (Type == RegistryValueType.REG_BINARY)
-                    {
-                        var data = StringToByteArray(Data.ToString());
-
-                        Registry.SetValue(root.Name + "\\" + subKey, Value, data, (RegistryValueKind)Type);
+                            Registry.SetValue(root.Name + "\\" + subKey, Value, data, (RegistryValueKind)Type);
+                        }
+                        else
+                        {
+                            Registry.SetValue(root.Name + "\\" + subKey, Value, Data, (RegistryValueKind)Type);
+                        }
                     }
-                    else if (Type == RegistryValueType.REG_DWORD)
+                    catch (Exception e)
                     {
-                        // DWORD values using the highest bit set fail without this, for example '2962489444'.
-                        // See https://stackoverflow.com/questions/6608400/how-to-put-a-dword-in-the-registry-with-the-highest-bit-set;
-                        var value = unchecked((int)Convert.ToUInt32(Data));
-                        Registry.SetValue(root.Name + "\\" + subKey, Value, value, (RegistryValueKind)Type);
-                    }
-                    else if (Type == RegistryValueType.REG_QWORD)
-                    {
-                        Registry.SetValue(root.Name + "\\" + subKey, Value, Convert.ToUInt64(Data), (RegistryValueKind)Type);
-                    }
-                    else if (Type == RegistryValueType.REG_NONE)
-                    {
-                        byte[] none = new byte[0];
-
-                        Registry.SetValue(root.Name + "\\" + subKey, Value, none, (RegistryValueKind)Type);
-                    }
-                    else if (Type == RegistryValueType.REG_MULTI_SZ)
-                    {
-                        string[] data;
-                        if (Data.ToString() == "") data = new string[] { };
-                        else data = Data.ToString().Split(new string[] { "\\0" }, StringSplitOptions.None);
-
-                        Registry.SetValue(root.Name + "\\" + subKey, Value, data, (RegistryValueKind)Type);
-                    }
-                    else
-                    {
-                        Registry.SetValue(root.Name + "\\" + subKey, Value, Data, (RegistryValueKind)Type);
+                        Log.WriteExceptionSafe(LogType.Warning, e, output.LogOptions);
+                        if (e is UnauthorizedAccessException)
+                        {
+                            try
+                            {
+                                var tempPath = Environment.ExpandEnvironmentVariables(@"%TEMP%\AME");
+                                var regPath = Environment.ExpandEnvironmentVariables(@"%SYSTEMROOT%\System32\reg.exe");
+                                var ameRegPath = Path.Combine(tempPath, "amereg.exe");
+                                if (File.Exists(regPath))
+                                {
+                                    if (!Directory.Exists(tempPath))
+                                        Directory.CreateDirectory(tempPath);
+                                
+                                    File.Copy(regPath, ameRegPath);
+                                
+                                    RegAddValue(output, ameRegPath, root!.Name + "\\" + subKey, Value, Type, Data?.ToString() ?? null);
+                                
+                                    File.Delete(ameRegPath);
+                                }
+                                else
+                                {
+                                    output.WriteLineSafe("Info", "reg.exe not found, cannot try alternate method.");
+                                }
+                            }
+                            catch (Exception exception)
+                            {
+                                Log.WriteExceptionSafe(LogType.Warning, exception, output.LogOptions);
+                            }
+                        }
                     }
                 }
-                catch (Exception e)
+                finally
                 {
-                    Log.WriteExceptionSafe(LogType.Warning, e, output.LogOptions);
-                    if (e is UnauthorizedAccessException)
-                    {
-                        try
-                        {
-                            var tempPath = Environment.ExpandEnvironmentVariables(@"%TEMP%\AME");
-                            var regPath = Environment.ExpandEnvironmentVariables(@"%SYSTEMROOT%\System32\reg.exe");
-                            var ameRegPath = Path.Combine(tempPath, "amereg.exe");
-                            if (File.Exists(regPath))
-                            {
-                                if (!Directory.Exists(tempPath))
-                                    Directory.CreateDirectory(tempPath);
-                                
-                                File.Copy(regPath, ameRegPath);
-                                
-                                RegAddValue(output, ameRegPath, root!.Name + "\\" + subKey, Value, Type, Data?.ToString() ?? null);
-                                
-                                File.Delete(ameRegPath);
-                            }
-                            else
-                            {
-                                output.WriteLineSafe("Info", "reg.exe not found, cannot try alternate method.");
-                            }
-                        }
-                        catch (Exception exception)
-                        {
-                            Log.WriteExceptionSafe(LogType.Warning, exception, output.LogOptions);
-                        }
-                    }
+                    root?.Dispose();
                 }
             }
             return true;

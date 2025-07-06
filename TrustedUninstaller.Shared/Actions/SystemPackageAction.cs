@@ -50,6 +50,7 @@ namespace TrustedUninstaller.Shared.Actions
 
         public string ErrorString() => $"SystemPackageAction failed to remove '{Name}'.";
         
+        public override string? IsISOCompatible() => "SystemPackageAction does not support iso.";
         public UninstallTaskStatus GetStatus(Output.OutputWriter output)
         {
             if (InProgress) return UninstallTaskStatus.InProgress;
@@ -57,7 +58,7 @@ namespace TrustedUninstaller.Shared.Actions
         }
         private bool HasFinished = false;
         public async Task<bool> RunTask(Output.OutputWriter output)
-        {
+        {                
             if (InProgress) throw new TaskInProgressException("Another Appx action was called while one was in progress.");
             InProgress = true;
 

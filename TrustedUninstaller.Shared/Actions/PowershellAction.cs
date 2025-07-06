@@ -17,6 +17,7 @@ namespace TrustedUninstaller.Shared.Actions
 {
     public class PowerShellAction : Tasks.TaskActionWithOutputProcessor, ITaskAction
     {
+        public override string? IsISOCompatible() => "For safety reasons, PowerShellAction does not support iso.";
         public void RunTaskOnMainThread(Output.OutputWriter output)
         {
             if (InProgress) throw new TaskInProgressException("Another Powershell action was called while one was in progress.");
@@ -37,6 +38,7 @@ namespace TrustedUninstaller.Shared.Actions
             InProgress = false;
             return;
         }
+        
         [YamlMember(typeof(Privilege), Alias = "runas")]
         public Privilege RunAs { get; set; } = Privilege.TrustedInstaller;
         

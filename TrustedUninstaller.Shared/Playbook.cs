@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Policy;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
@@ -29,6 +30,114 @@ using MessageBox = System.Windows.MessageBox;
 
 namespace TrustedUninstaller.Shared
 {
+    [Serializable]
+    public class VersionNumber : IXmlSerializable
+    {
+        public void WriteXml(XmlWriter writer)
+        {
+            writer.WriteValue(this.ToString());
+        }
+
+        public void ReadXml(XmlReader reader)
+        {
+            var text = (string)reader.ReadElementContentAs(typeof(string), null);
+            if (!String.IsNullOrEmpty(text))
+            {
+                var version = GetVersionNumber(text);
+                this.Major = version.Major;
+                this.Minor = version.Minor;
+                this.Revision = version.Revision;
+            }
+        }
+
+        public XmlSchema GetSchema() => null;
+        
+        public int Major { get; set; }
+        public int Minor { get; set; }
+        public int Revision { get; set; }
+        
+        public static bool operator ==(VersionNumber a, VersionNumber b)
+        {
+            if (a is null || b is null) return true;
+            return a.IsEqual(b);
+        }
+        
+        public static bool operator !=(VersionNumber a, VersionNumber b)
+        {
+            if (a is null || b is null) return false;
+            return !a.IsEqual(b);
+        }
+        public static bool operator >=(VersionNumber a, VersionNumber b)
+        {
+            if (a is null || b is null) throw new ArgumentNullException();
+            return a.IsGreaterThanOrEqualTo(b);
+        }
+        public static bool operator >(VersionNumber a, VersionNumber b)
+        {
+            if (a is null || b is null) throw new ArgumentNullException();
+            return a.IsGreaterThan(b);
+        } 
+
+        public static bool operator <=(VersionNumber a, VersionNumber b)
+        {
+            if (a is null || b is null) throw new ArgumentNullException();
+            return a.IsLessThanOrEqualTo(b);
+        }
+        public static bool operator <(VersionNumber a, VersionNumber b)
+        {
+            if (a is null || b is null) throw new ArgumentNullException();
+            return a.IsLessThan(b);
+        }
+            
+        public bool IsEqual(VersionNumber other) => Major == other.Major && Minor == other.Minor && Revision == other.Revision;
+        public bool IsGreaterThan(VersionNumber other) => Major > other.Major || (Major >= other.Major && Minor > other.Minor) || (Major >= other.Major && Minor >= other.Minor && Revision > other.Revision);
+        public bool IsLessThan(VersionNumber other) => other.IsGreaterThan(this);
+        
+        public bool IsGreaterThanOrEqualTo(VersionNumber other) => IsGreaterThan(other) || IsEqual(other);
+        public bool IsLessThanOrEqualTo(VersionNumber other) => IsLessThan(other) || IsEqual(other);
+        
+        public override bool Equals(object obj)
+        {
+            if (obj is VersionNumber other)
+                return this == other;
+            return false;
+        }
+
+        public override string ToString() => Major + "." + Minor + "." + Revision;
+
+        public static VersionNumber GetVersionNumber(string toBeParsed)
+        {
+            // Examples:
+            // 0.4
+            // 0.4 Alpha
+            // 1.0.5
+            // 1.0.5 Beta
+            
+            VersionNumber number = new VersionNumber();
+            
+            // Remove characters after first space (and the space itself)
+            if (toBeParsed.IndexOf(' ') >= 0)
+                toBeParsed = toBeParsed.Substring(0, toBeParsed.IndexOf(' '));
+
+            var numbers = toBeParsed.Split('.');
+            if (numbers.Length <= 0)
+                throw new XmlException($"Invalid version number '{toBeParsed}'");
+            for (var i = 0; i < numbers.Length; i++)
+            {
+                if (i == 0)
+                    number.Major = int.Parse(numbers[i], CultureInfo.InvariantCulture);
+                if (i == 1)
+                    number.Minor = int.Parse(numbers[i], CultureInfo.InvariantCulture);
+                if (i == 2)
+                    number.Revision = int.Parse(numbers[i], CultureInfo.InvariantCulture);
+
+                if (i > 2)
+                    throw new Exception("Version number invalid.");
+            }
+            return number;
+        }
+    }
+    
     public enum ErrorLevel
     {
         Success = 0,
@@ -62,10 +171,29 @@ namespace TrustedUninstaller.Shared
                 throw new XmlException("Playbook Name is too long.");
             if (MeasureStringWidth(Username, new Typeface("Segoe UI"), 13) > 100)
                 throw new XmlException("Playbook Username is too long.");
-            if (Wrap.ExecuteSafe(() => GetVersionNumber(Version), false).Failed)
+            if (Wrap.ExecuteSafe(() => VersionNumber.GetVersionNumber(Version), false).Failed)
                 throw new XmlException($"Improper version format '{Version}'. Version must follow one of these formats:\r\n1\r\n1.0\r\n1.0.0");
+
+            if (SupportsISO)
+            {
+                if (OOBE == null || OOBE.BulletPoints == null || OOBE.BulletPoints.Count == 0)
+                    throw new XmlException("OOBE BulletPoints must be specified when SupportsISO is true.");
+                
+                if (OOBE.BulletPoints == null || OOBE.BulletPoints.Count != 3)
+                    throw new XmlException("There must be exactly three features under OOBEFeatures.");
+                else if (OOBE.BulletPoints.Any(x => OOBE.BulletPoints.Any(y => y != x && y.Icon == x.Icon)))
+                    throw new XmlException("OOBE feature icons must be distinct.");
+                else if (OOBE.BulletPoints.Any(x => string.IsNullOrEmpty(x.Title) || string.IsNullOrWhiteSpace(x.Description)))
+                    throw new XmlException("OOBE feature title and description must be non-empty.");
+            }
+            
             IsUpgradeApplicable("1.0.0");
         }
+        
+        [CanBeNull]
+        public ISOSettings ISO { get; set; } = null;
+        [CanBeNull]
+        public OOBESettings OOBE { get; set; } = null;
         
         [XmlRequired(false)]
         public string Name { get; set; }
@@ -87,6 +215,7 @@ namespace TrustedUninstaller.Shared
         [XmlArrayItem(Type = typeof(RadioPage))]
         [XmlArrayItem(Type = typeof(RadioImagePage))]
         public FeaturePage[] FeaturePages { get; set; }
+        public Package[] Software { get; set; } = Array.Empty<Package>();
 
         public string ProgressText { get; set; } = "Deploying the selected Playbook configuration onto the system.";
         public int EstimatedMinutes { get; set; } = 25;
@@ -94,8 +223,8 @@ namespace TrustedUninstaller.Shared
 #nullable enable
         public string[]? SupportedBuilds { get; set; }
         public Requirements.Requirement[] Requirements { get; set; } = new Requirements.Requirement[] {};
-        public string? Git { get; set; }
         public string? InstallGuide { get; set; }
+        public string? Git { get; set; }
         public string? DonateLink { get; set; }
         public string? Website { get; set; }
         public string? ProductCode { get; set; }
@@ -106,6 +235,7 @@ namespace TrustedUninstaller.Shared
         public bool? AllowUnsupportedUpgrades { get; set; } = true;
 #nullable disable
         public bool Overhaul { get; set; } = false;
+        public bool SupportsISO { get; set; } = false;
 
         [XmlIgnore]
         public string Path { get; set; }
@@ -210,7 +340,7 @@ namespace TrustedUninstaller.Shared
         {
             if (UpgradableFrom != null)
             {
-                var oldVersionNumber = GetVersionNumber(oldVersion);
+                var oldVersionNumber = VersionNumber.GetVersionNumber(oldVersion);
 
                 foreach (var version in UpgradableFrom)
                 {
@@ -221,16 +351,16 @@ namespace TrustedUninstaller.Shared
                     {
                         var split = version.Split('-');
                         if (split.Length != 2) throw new XmlException($"Invalid version range format '{version}'");
-                        var version1 = GetVersionNumber(split[0]);
-                        var version2 = GetVersionNumber(split[1]);
+                        var version1 = VersionNumber.GetVersionNumber(split[0]);
+                        var version2 = VersionNumber.GetVersionNumber(split[1]);
 
-                        if (oldVersionNumber >= version1 && oldVersionNumber <= version2)
+                        if (oldVersionNumber.IsGreaterThanOrEqualTo(version1) && oldVersionNumber.IsLessThanOrEqualTo(version2))
                             return true;
                         
                         continue;
                     }
 
-                    var versionNumberResult = Wrap.ExecuteSafe(() => GetVersionNumber(version));
+                    var versionNumberResult = Wrap.ExecuteSafe(() => VersionNumber.GetVersionNumber(version));
                     if (versionNumberResult.Failed)
                         throw new XmlException($"Invalid '{nameof(UpgradableFrom)}' value '{version}'. Values must follow one of the these formats:\r\n1.0.0\r\n1.0.0-2.0.0\r\nany");
 
@@ -240,33 +370,14 @@ namespace TrustedUninstaller.Shared
             }
             return false;
         }
+
+
         
-        public static decimal GetVersionNumber(string toBeParsed)
-        {
-            // Examples:
-            // 0.4
-            // 0.4 Alpha
-            // 1.0.5
-            // 1.0.5 Beta
-            
-            
-            // Remove characters after first space (and the space itself)
-            if (toBeParsed.IndexOf(' ') >= 0)
-                toBeParsed = toBeParsed.Substring(0, toBeParsed.IndexOf(' '));
 
-            if (toBeParsed.LastIndexOf('.') != toBeParsed.IndexOf('.'))
-            {
-                // Example: 1.0.5
-                toBeParsed = toBeParsed.Remove(toBeParsed.LastIndexOf('.'), 1);
-                // Result: 1.05
-            }
-            
-            return decimal.Parse(toBeParsed, CultureInfo.InvariantCulture);
-        }
 
-        public decimal GetVersionNumber()
+        public VersionNumber GetVersionNumber()
         {
-            return GetVersionNumber(Version);
+            return VersionNumber.GetVersionNumber(Version);
         }
 
         public async Task<string> LatestPlaybookVersion()
@@ -453,6 +564,10 @@ namespace TrustedUninstaller.Shared
             return $"Name: {Name}\nDescription: {Description}\nUsername: {Username}\nDetails: {Details}\nRequirements: {Requirements}."; 
         }
 
+        
+
+        
+
         public class CheckboxPage : FeaturePage
         {
             public override void Validate()
@@ -472,6 +587,8 @@ namespace TrustedUninstaller.Shared
             {
                 [XmlAttribute]
                 public bool IsChecked { get; set; } = true;
+                [XmlAttribute]
+                public bool IsEnabled { get; set; } = true;
             }
 
             [XmlArray]
@@ -519,6 +636,13 @@ namespace TrustedUninstaller.Shared
 
                 if (Options.Distinct().Count() != Options.Length)
                     throw new XmlException("Duplicate options found in RadioImagePage.");
+
+                if (Options.OfType<RadioImageOption>().Any(x => x.GradientTopColor == x.GradientBottomColor && !x.None))
+                    throw new XmlException("RadioImageOption gradient colors must not be the same.");
+                if (Options.OfType<RadioImageOption>().Any(x => !x.None && (x.GradientTopColor.Length != 7 || x.GradientBottomColor.Length != 7)))
+                    throw new XmlException("RadioImageOption gradient colors must be in the format #RRGGBB.");
+                if (Options.OfType<RadioImageOption>().Any(x => string.Equals(x.GradientTopColor, "#FFFFFF", StringComparison.OrdinalIgnoreCase) || string.Equals(x.GradientBottomColor, "#FFFFFF", StringComparison.OrdinalIgnoreCase) || string.Equals(x.GradientTopColor, "#000000", StringComparison.OrdinalIgnoreCase) || string.Equals(x.GradientBottomColor, "#000000", StringComparison.OrdinalIgnoreCase)))
+                    throw new XmlException("RadioImageOption gradient colors must not be black or white.");
             }
 
             [XmlAttribute]
@@ -551,6 +675,8 @@ namespace TrustedUninstaller.Shared
             [XmlAttribute]
             public string DependsOn { get; set; } = null;
             [XmlAttribute]
+            public string WindowsVersion { get; set; } = null;
+            [XmlAttribute]
             public bool IsRequired { get; set; } = false;
             public Line TopLine { get; set; } = null;
             public Line BottomLine { get; set; } = null;
@@ -562,6 +688,8 @@ namespace TrustedUninstaller.Shared
                 
                 [XmlAttribute]
                 public string DependsOn { get; set; } = null;
+                [XmlAttribute]
+                public string WindowsVersion { get; set; } = null;
             }
             public class Line
             {
@@ -579,5 +707,59 @@ namespace TrustedUninstaller.Shared
             [XmlAttribute]
             public string Description { get; set; }
         }
+    
+        public class Package : XmlDeserializable
+        {
+            public override void Validate()
+            {
+                if (string.IsNullOrWhiteSpace(Name))
+                    throw new XmlException("Software must have a Name.");
+                if (string.IsNullOrWhiteSpace(Title))
+                    throw new XmlException("Software must have a Title.");
+                if (string.IsNullOrWhiteSpace(Description))
+                    throw new XmlException("Software must have a Description.");
+                if (string.IsNullOrWhiteSpace(Icon))
+                    throw new XmlException("Software must have an Icon specified.");
+            }
+
+            [XmlAttribute]
+            public string Option { get; set; } = null;
+            [XmlAttribute]
+            public bool Local { get; set; } = true;
+            [XmlAttribute]
+            public bool? DefaultWebBrowser { get; set; } = null;
+            
+            public string Name { get; set; }
+            public string Title { get; set; }
+            public string Description { get; set; }
+            public string Icon { get; set; }
+        }
+    }
+    public enum ComponentIcon
+    {
+        Rocket,
+        Privacy,
+        Lock,
+    }
+
+    public class ISOSettings
+    {
+        public bool DisableBitLocker { get; set; } = false;
+        public bool DisableHardwareRequirements { get; set; } = false;
+    }
+
+    public class OOBESettings
+    {
+        public OOBE.InternetRequirementLevel? Internet { get; set; } = null;
+        public List<BulletPoint> BulletPoints { get; set; } = null;
+    }
+    public class BulletPoint
+    {
+        [XmlAttribute]
+        public ComponentIcon Icon { get; set; }
+        [XmlAttribute]
+        public string Title { get; set; }
+        [XmlAttribute]
+        public string Description { get; set; }
     }
 }

@@ -1,9 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json.Serialization;
 using Core.Miscellaneous;
 using JetBrains.Annotations;
 using Core;
+using iso_mode;
 using TrustedUninstaller.Shared;
 
 namespace Interprocess
@@ -11,6 +14,12 @@ namespace Interprocess
     public partial class InterLink
     {
         [JsonSerializable(typeof(Playbook))]
+        
+        [JsonSerializable(typeof(List<System.IO.DriveInfo>))]
+        [JsonSerializable(typeof(System.IO.DriveInfo))]
+        [JsonSerializable(typeof(List<USB.UsbDisk>))]
+        [JsonSerializable(typeof(USB.UsbDisk))]
+        [JsonSerializable(typeof(USB.UsbDevice))]
         
         // Custom types
         [JsonSerializable(typeof(InterMessage))]
@@ -70,6 +79,8 @@ namespace Interprocess
         [JsonSerializable(typeof(DateTime?))]
         [JsonSerializable(typeof(DateTimeOffset?))]
         [JsonSerializable(typeof(Guid?))]
+        [JsonSerializable(typeof(Architecture))]
+        [JsonSerializable(typeof(Architecture?))]
         [JsonSerializable(typeof(Uri))]
 
         // TODO: On switch to .NET 8 with trimming
@@ -78,6 +89,12 @@ namespace Interprocess
             public static SourceGenerationContext Default { get; } = new SourceGenerationContext();
             public static HashSet<Type> SerializableTypes { get; } = new HashSet<Type>
             {
+                typeof(List<USB.UsbDisk>),
+                typeof(USB.UsbDisk),
+                typeof(USB.UsbDevice),
+                typeof(System.IO.DriveInfo),
+                typeof(Playbook),
+                
                 // Custom types
                 typeof(InterMessage),
                 typeof(InterProgress),
@@ -136,6 +153,8 @@ namespace Interprocess
                 typeof(DateTime?),
                 typeof(DateTimeOffset?),
                 typeof(Guid?),
+                typeof(Architecture),
+                typeof(Architecture?),
                 typeof(Uri)
             };
 
@@ -144,7 +163,7 @@ namespace Interprocess
             {
                 if (SerializableTypes.Contains(type) || (type.IsArray && SerializableTypes.Contains(type.GetElementType())) || type.IsEnum)
                     return new object();
-
+                
                 return null;
             }
         }

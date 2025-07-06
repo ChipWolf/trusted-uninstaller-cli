@@ -22,6 +22,16 @@ namespace Core
     {
         #region Pipelines
 
+        private static ResiliencePipeline _retryExponential = null;
+        public static ResiliencePipeline RetryExponential { get => _retryExponential ??= new ResiliencePipelineBuilder().AddRetry(new RetryStrategyOptions()
+        {
+            MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            UseJitter = true,
+            Delay = TimeSpan.FromMilliseconds(1000)
+        }).Build(); }
+
+
         /// <summary>
         /// Retries operation.
         /// <br/>Will NOT retry upon an <b>OperationCanceledException</b>.

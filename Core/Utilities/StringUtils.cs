@@ -20,7 +20,7 @@ namespace Core
         }
         public static string HumanReadableDiskSize(long input)
         {
-            long dividedSize = input;
+            double dividedSize = input;
             string suffix = "";
             foreach (var sizeSuffix in new[] { "KB", "MB", "GB", "TB", "PB" })
             {
@@ -41,16 +41,17 @@ namespace Core
             }
             else
             {
-                int t = (int)dividedSize;
+                uint t = (uint)dividedSize;
 
                 t--;
                 t |= t >> 1;
                 t |= t >> 2;
                 t |= t >> 4;
                 t |= t >> 8;
+                t |= t >> 16;
                 t++;
 
-                var result = (Math.Abs(1.0f - (dividedSize / (double)t)) < 0.05f) ? (double)t : dividedSize;
+                var result = (Math.Abs(1.0f - (dividedSize / (double)t)) < 0.05f) ? (long)t : (long)dividedSize;
                 return result + " " + suffix;
             }
         }

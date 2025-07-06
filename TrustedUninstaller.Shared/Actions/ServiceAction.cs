@@ -93,7 +93,8 @@ namespace TrustedUninstaller.Shared.Actions
                 // TODO: Implement dev log. Example:
                 // if (Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}") == null) WriteToDevLog($"Warning: Service name '{ServiceName}' not found in registry.");
 
-                var root = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}");
+                using var root = !AmeliorationUtil.ISO ? Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}") :
+                        Registry.Users.OpenSubKey("HKLM-" + AmeliorationUtil.ISOGuid + $@"\SYSTEM\ControlSet001\Services\{ServiceName}");
                 if (root == null) return UninstallTaskStatus.Completed;
 
                 var value = root.GetValue("Start");
@@ -101,18 +102,23 @@ namespace TrustedUninstaller.Shared.Actions
                 return (int)value == Startup.Value ? UninstallTaskStatus.Completed : UninstallTaskStatus.ToDo;
             }
             
-            ServiceController? serviceController;
-            if (Device) serviceController = GetDevice();
-            else serviceController = GetService();
-            
-            if (Operation == ServiceOperation.Delete && RegistryDelete)
+            if (Operation == ServiceOperation.Delete && (RegistryDelete || AmeliorationUtil.ISO))
             {
                 // TODO: Implement dev log. Example:
                 // if (Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}") == null) WriteToDevLog($"Warning: Service name '{ServiceName}' not found in registry.");
 
-                var root = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}");
+                using var root = !AmeliorationUtil.ISO ? Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}") :
+                    Registry.Users.OpenSubKey("HKLM-" + AmeliorationUtil.ISOGuid + $@"\SYSTEM\ControlSet001\Services\{ServiceName}");
                 return root == null ? UninstallTaskStatus.Completed : UninstallTaskStatus.ToDo;
             }
+
+            if (AmeliorationUtil.ISO)
+                return UninstallTaskStatus.Completed;
+
+            ServiceController? serviceController;
+            if (Device) serviceController = GetDevice();
+            else serviceController = GetService();
+            
 
             return Operation switch
             {
@@ -143,7 +149,8 @@ namespace TrustedUninstaller.Shared.Actions
         }
 
         private readonly string[] RegexNoKill = { "DcomLaunch" }; 
-        
+       
+        public override string? IsISOCompatible() => Operation != ServiceOperation.Delete && Operation != ServiceOperation.Change ? "ServiceAction only supports Delete and Change operations with iso." : null; 
         public async Task<bool> RunTask(Output.OutputWriter output)
         {
             if (InProgress) throw new TaskInProgressException("Another Service action was called while one was in progress.");
@@ -165,6 +172,17 @@ namespace TrustedUninstaller.Shared.Actions
                 };
                 await action.RunTask(output);
                 
+                InProgress = false;
+                return true;
+            } else if (Operation == ServiceOperation.Delete && AmeliorationUtil.ISO)
+            {
+                var action = new RegistryKeyAction()
+                {
+                    KeyName = $@"HKLM\SYSTEM\CurrentControlSet\Services\{ServiceName}",
+                    Operation = RegistryKeyOperation.Delete
+                };
+                await action.RunTask(output);
+
                 InProgress = false;
                 return true;
             }

@@ -130,6 +130,8 @@ namespace TrustedUninstaller.Shared.Actions
         // These processes give access denied errors when getting their handle for IsProcessCritical.
         // TODO: Investigate how to properly acquire permissions.
         private readonly string[] RegexNotCritical = { "SecurityHealthService", "wscsvc", "MsMpEng", "SgrmBroker" };
+        
+        public override string? IsISOCompatible() => "TaskKillAction does not support iso.";
         public async Task<bool> RunTask(Output.OutputWriter output)
         {
             InProgress = true;

@@ -955,7 +955,7 @@ namespace TrustedUninstaller.Shared
                             //byte[] environmentBytes = EnvironmentBlock.ToByteArray(startInfo.environmentVariables, true);
                             //environmentHandle = GCHandle.Alloc(environmentBytes, GCHandleType.Pinned);
                             //environmentPtr = environmentHandle.AddrOfPinnedObject();
-                            Win32.Process.CreateEnvironmentBlock(out environmentPtr, token, false);
+                            Win32.Process.CreateEnvironmentBlock(out environmentPtr, token, true);
                         }
 
                         /*
@@ -996,6 +996,12 @@ namespace TrustedUninstaller.Shared
                             retVal = false;
                             if (type == CreateType.UserToken)
                             {
+                                if (startInfo.UseSession0)
+                                {
+                                    var sessionId = 0;
+                                    Win32.Tokens.SetTokenInformation(token,
+                                        Win32.Tokens.TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(int));
+                                }
                                 retVal = NativeMethods.CreateProcessAsUser(token,
                                     null, // we don't need this since all the info is in commandLine
                                     commandLine, // pointer to the command line string
@@ -1010,6 +1016,12 @@ namespace TrustedUninstaller.Shared
                                 );
                             } else if (type == CreateType.RawToken)
                             {
+                                if (startInfo.UseSession0)
+                                {
+                                    var sessionId = 0;
+                                    Win32.Tokens.SetTokenInformation(token,
+                                        Win32.Tokens.TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(int));
+                                }
                                 retVal = NativeMethods.CreateProcessWithToken(token,
                                     NativeMethods.LogonFlags.LOGON_WITH_PROFILE,
                                     null, // we don't need this since all the info is in commandLine
@@ -2726,6 +2738,7 @@ namespace TrustedUninstaller.Shared
             Encoding standardOutputEncoding;
             Encoding standardErrorEncoding;
             bool createNoWindow = false;
+            bool useSession0 = false;
             WeakReference weakParentProcess;
             internal StringDictionary environmentVariables;
             /// <devdoc>
@@ -2803,6 +2816,17 @@ namespace TrustedUninstaller.Shared
                 set
                 {
                     createNoWindow = value;
+                }
+            }
+            public bool UseSession0
+            {
+                get
+                {
+                    return useSession0;
+                }
+                set
+                {
+                    useSession0 = value;
                 }
             }
             public StringDictionary EnvironmentVariables

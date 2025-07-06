@@ -46,7 +46,7 @@ namespace TrustedUninstaller.Shared.Actions
 
         private string GetRealPath()
         {
-            return Environment.ExpandEnvironmentVariables(RawPath);
+            return AmeliorationUtil.ISO ? Environment.ExpandEnvironmentVariables(RawPath).Replace("C:", AmeliorationUtil.WimPath).Replace("c:", AmeliorationUtil.WimPath) : Environment.ExpandEnvironmentVariables(RawPath);
         }
 
         private string GetRealPath(string path)
@@ -56,7 +56,14 @@ namespace TrustedUninstaller.Shared.Actions
 
         public UninstallTaskStatus GetStatus(Output.OutputWriter output)
         {
-            if (InProgress) return UninstallTaskStatus.InProgress; var realPath = GetRealPath();
+            if (InProgress) return UninstallTaskStatus.InProgress;
+
+            if (AmeliorationUtil.ISO)
+            {
+                return UninstallTaskStatus.Completed;
+            }
+            
+            var realPath = GetRealPath();
             
             if (realPath.Contains("*"))
             {
@@ -174,6 +181,9 @@ namespace TrustedUninstaller.Shared.Actions
         private async Task DeleteItemsInDirectory(string dir, Output.OutputWriter output, string filter = "*")
         {
             var realPath = GetRealPath(dir);
+            
+            if (!Directory.Exists(realPath))
+                return;
 
             var files = Directory.EnumerateFiles(realPath, filter);
             var directories = Directory.EnumerateDirectories(realPath, filter);
@@ -386,6 +396,13 @@ namespace TrustedUninstaller.Shared.Actions
             if (InProgress) throw new TaskInProgressException("Another File action was called while one was in progress.");
             InProgress = true;
 
+            if (AmeliorationUtil.ISO)
+            {
+                var wimPath = Environment.ExpandEnvironmentVariables(RawPath).Replace(@"C:\", "").Replace(@"c:\", "");
+                AmeliorationUtil.WimInstance.DeleteFileOrFolder(wimPath);
+                return true;
+            }
+            
             var realPath = GetRealPath();
             
             output.WriteLineSafe("Info", $"Removing file or directory '{realPath}'...");

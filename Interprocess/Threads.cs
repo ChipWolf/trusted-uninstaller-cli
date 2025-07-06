@@ -245,8 +245,9 @@ namespace Interprocess
                     task.GetAwaiter().GetResult();
                     if (task.GetType().IsGenericType)
                     {
-                        dynamic taskOfTypeT = task;
-                        result.Value = taskOfTypeT.Result == null ? null : new Serializables.SerializableValue(taskOfTypeT.Result.GetType(), taskOfTypeT.Result);
+                        object taskResult = task.GetType().GetProperty("Result")?.GetValue(task);
+                        Type taskType = task.GetType().GetProperty("Result")?.PropertyType;
+                        result.Value = taskResult == null ? null : new Serializables.SerializableValue(taskType, taskResult);
                     }
                 }
 

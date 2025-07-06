@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Core;
 using TrustedUninstaller.Shared.Tasks;
 using YamlDotNet.Serialization;
-using IWshRuntimeLibrary;
+//using IWshRuntimeLibrary;
 using File = System.IO.File;
 
 namespace TrustedUninstaller.Shared.Actions
@@ -50,11 +50,11 @@ namespace TrustedUninstaller.Shared.Actions
             if (File.Exists(this.RawPath))
             {
 
-                WshShell shell = new WshShell();
-                var sc = (IWshShortcut)shell.CreateShortcut(Path.Combine(this.Destination, this.Name + ".lnk"));
-                sc.Description = this.Description;
-                sc.TargetPath = this.RawPath;
-                sc.Save();
+                //WshShell shell = new WshShell();
+                //var sc = (IWshShortcut)shell.CreateShortcut(Path.Combine(this.Destination, this.Name + ".lnk"));
+                //sc.Description = this.Description;
+                //sc.TargetPath = this.RawPath;
+                //sc.Save();
             }
             else
             {

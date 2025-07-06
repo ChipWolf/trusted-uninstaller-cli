@@ -16,6 +16,7 @@ namespace TrustedUninstaller.Shared.Actions
 {
     public class RunAction : Tasks.TaskActionWithOutputProcessor, ITaskAction
     {
+        public override string? IsISOCompatible() => "For safety reasons, RunAction does not support iso.";
         public void RunTaskOnMainThread(Output.OutputWriter output)
         {
             if (RawPath != null) RawPath = Environment.ExpandEnvironmentVariables(RawPath);
@@ -51,6 +52,7 @@ namespace TrustedUninstaller.Shared.Actions
             InProgress = false;
             return;
         }
+        
         [YamlMember(typeof(Privilege), Alias = "runas")]
         public Privilege RunAs { get; set; } = Privilege.TrustedInstaller;
         
@@ -71,7 +73,9 @@ namespace TrustedUninstaller.Shared.Actions
 
         [YamlMember(typeof(bool), Alias = "createWindow")]
         public bool CreateWindow { get; set; } = false;
-        
+       
+        [YamlMember(typeof(bool), Alias = "hideWindow")]
+        public bool HideWindow { get; set; } = false; 
         [YamlMember(typeof(bool), Alias = "showOutput")]
         public bool ShowOutput { get; set; } = true;
         
@@ -96,7 +100,7 @@ namespace TrustedUninstaller.Shared.Actions
         private bool InProgress { get; set; } = false;
         public void ResetProgress() => InProgress = false;
         private bool HasExited { get; set; } = false;
-        //public int ExitCode { get; set; }
+        public int ExitCode { get; set; }
         
         public string ErrorString() => String.IsNullOrEmpty(Arguments) ? $"RunAction failed to execute '{Exe}'." : $"RunAction failed to execute '{Exe}' with arguments '{Arguments}'.";
         
@@ -134,7 +138,7 @@ namespace TrustedUninstaller.Shared.Actions
 
         private void RunAsProcess(string file, Output.OutputWriter output)
         {
-            var startInfo = new ProcessStartInfo
+            var startInfo = new AugmentedProcess.ProcessStartInfo
             {
                 CreateNoWindow = !this.CreateWindow,
                 UseShellExecute = false,
@@ -142,6 +146,7 @@ namespace TrustedUninstaller.Shared.Actions
                 RedirectStandardError = ShowError,
                 RedirectStandardOutput = ShowOutput,
                 FileName = file,
+                UseSession0 = HideWindow
             };
             if (Arguments != null) startInfo.Arguments = Environment.ExpandEnvironmentVariables(Arguments);
 
@@ -154,7 +159,7 @@ namespace TrustedUninstaller.Shared.Actions
                 startInfo.UseShellExecute = true;
             }
 
-            using var exeProcess = new Process
+            using var exeProcess = new AugmentedProcess.Process
             {
                 StartInfo = startInfo,
                 EnableRaisingEvents = true
@@ -196,6 +201,7 @@ namespace TrustedUninstaller.Shared.Actions
                 output.WriteLineSafe("Info", $"Process exited with a non-zero exit code: {exitCode}");
 
             HasExited = true;
+            ExitCode = exitCode;
             
             if (HandleExitCodes != null)
             {
@@ -218,6 +224,7 @@ namespace TrustedUninstaller.Shared.Actions
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 FileName = file,
+                UseSession0 = HideWindow
             };
             if (Arguments != null) startInfo.Arguments = Arguments;
 
@@ -279,6 +286,7 @@ namespace TrustedUninstaller.Shared.Actions
                 output.WriteLineSafe("Info", $"Process exited with a non-zero exit code: {exeProcess.ExitCode}");
 
             HasExited = true;
+            ExitCode = exitCode;
             
             if (HandleExitCodes != null)
             {

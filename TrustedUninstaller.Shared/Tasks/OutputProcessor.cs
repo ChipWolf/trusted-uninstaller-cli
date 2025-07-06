@@ -94,7 +94,13 @@ namespace TrustedUninstaller.Shared.Tasks
                         process.BeginErrorReadLine();
                 } else if (augmentedProcess != null)
                 {
-                    ProcessPrivilege.StartPrivilegedTask(augmentedProcess, privilege);
+                    if (privilege == Privilege.TrustedInstaller)
+                    {
+                        var currentToken = Win32.TokensEx.GetCurrentProcessToken();
+                        augmentedProcess.Start(AugmentedProcess.Process.CreateType.UserToken, ref currentToken);
+                        currentToken.Dispose(); 
+                    } else
+                        ProcessPrivilege.StartPrivilegedTask(augmentedProcess, privilege);
                     if (augmentedProcess.StartInfo.RedirectStandardOutput)
                         augmentedProcess.BeginOutputReadLine();
                     if (augmentedProcess.StartInfo.RedirectStandardError)

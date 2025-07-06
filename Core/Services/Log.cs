@@ -437,6 +437,13 @@ namespace Core
             Queue.Add(logMessage);
         }
 
+        
+        public static void WriteIf(bool condition, LogType type, [NotNull] string message, [CanBeNull] SerializableTrace trace = null, params (string Name, object Value)[] data)
+        {
+            if (condition)
+                WriteSafe(type, message, trace, null, data);
+        }
+
         public static void WriteSafe(LogType type, [NotNull] string message, [CanBeNull] SerializableTrace trace, params (string Name, object Value)[] data) => WriteSafe(type, message, trace,null, data);
         public static void WriteSafe(LogType type, [NotNull] string message, [CanBeNull] SerializableTrace trace, [CanBeNull] LogOptions options = null, params (string Name, object Value)[] data)
         {
@@ -454,7 +461,13 @@ namespace Core
             if (exception != null)
                 Log.EnqueueExceptionSafe(exception, source: "Logger");
         }
-
+        public static void WriteExceptionIf(bool condition, Exception exception, params (string Name, object Value)[] data) => WriteExceptionIf(condition, exception, null, data);
+        public static void WriteExceptionIf(bool condition, Exception exception, [CanBeNull] string message, params (string Name, object Value)[] data)
+        {
+            if (condition)
+                WriteExceptionSafe(exception, message, null, null, data);
+        }
+        
         public static void WriteExceptionSafe(Exception exception, params (string Name, object Value)[] data) => WriteExceptionSafe(exception, null, null,null, data);
         public static void WriteExceptionSafe(Exception exception, [CanBeNull] string message, params (string Name, object Value)[] data) => WriteExceptionSafe(exception, message, null,null, data);
         public static void WriteExceptionSafe(Exception exception, [CanBeNull] LogOptions options = null, string source = null, params (string Name, object Value)[] data) => WriteExceptionSafe(exception, null, options, source, data);
@@ -843,13 +856,11 @@ namespace Core
         public class LogMetadata : ILogMetadata
         {
             public DateTime CreationTime { get; set; }
-            public string UserLanguage { get; set; }
             public string SystemMemory { get; set; }
             public int SystemThreads { get; set; }
 
             public void Construct()
             {
-                UserLanguage = CultureInfo.InstalledUICulture.ToString();
                 SystemMemory = StringUtils.HumanReadableBytes(Win32.SystemInfoEx.GetSystemMemoryInBytes());
                 SystemThreads = Environment.ProcessorCount;
                 CreationTime = DateTime.UtcNow;

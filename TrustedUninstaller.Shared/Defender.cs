@@ -445,7 +445,7 @@ namespace TrustedUninstaller.Shared
                     UninstallService(service);
                     
                 service = Win32.Service.CreateService(scm, "AMEPrepare", "AME Prepare", Win32.Service.ServiceAccessRights.AllAccess, Win32.Service.SERVICE_WIN32_OWN_PROCESS, Win32.Service.ServiceBootFlag.AutoStart, Win32.Service.ServiceError.Normal, 
-                    $"\"{Win32.ProcessEx.GetCurrentProcessFileLocation()}\" -Service {displayLastUsername}", null, IntPtr.Zero, null, null, null);
+                    $"\"{Win32.ProcessEx.GetCurrentProcessFileLocation()}\" --service {displayLastUsername}", null, IntPtr.Zero, null, null, null);
 
                 if (service == IntPtr.Zero)
                     throw new ApplicationException("Failed to install service.");
@@ -1166,3 +1166,4 @@ namespace TrustedUninstaller.Shared
         }
     }
 }
+

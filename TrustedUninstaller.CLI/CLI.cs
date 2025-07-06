@@ -247,6 +247,7 @@ namespace TrustedUninstaller.CLI
                 options = args.Skip(1).ToList();
             }
 
+            var allOptions = AmeliorationUtil.Playbook.FeaturePages == null ? new string[] { } : AmeliorationUtil.Playbook.FeaturePages.SelectMany(x => x.Options.Select(o => o.Name)).Where(x => !string.IsNullOrEmpty(x)).ToArray();
             var status = "Starting Playbook";
             bool errorsOccurred = false;
             try
@@ -255,8 +256,8 @@ namespace TrustedUninstaller.CLI
                 {
                     using (var progress = new InterLink.InterProgress(async value => { Console.WriteLine(value + "% " + status + "..."); }))
                     {
-                        errorsOccurred = await InterLink.ExecuteAsync(() => AmeliorationUtil.RunPlaybook(AmeliorationUtil.Playbook.Path, AmeliorationUtil.Playbook.Name, AmeliorationUtil.Playbook.Version, options.ToArray(),
-                            Environment.CurrentDirectory, progress, reporter, AmeliorationUtil.UseKernelDriver));
+                        errorsOccurred = await InterLink.ExecuteAsync(() => AmeliorationUtil.RunPlaybook(AmeliorationUtil.Playbook.Path, true, false, null, null, null, AmeliorationUtil.Playbook.Name, AmeliorationUtil.Playbook.Version, options.ToArray(),
+                            allOptions, Environment.CurrentDirectory, progress, reporter, AmeliorationUtil.UseKernelDriver));
                     }
                 }
             }

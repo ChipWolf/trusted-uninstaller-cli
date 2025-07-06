@@ -46,6 +46,9 @@ namespace Core
             [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
             public static extern bool GlobalMemoryStatusEx([In, Out] MEMORYSTATUSEX lpBuffer);
             
+            [DllImport("kernel32.dll")]
+            public static extern bool GetDiskFreeSpaceEx(string lpDirectoryName, out UInt64 lpFreeBytesAvailable, out UInt64 lpTotalNumberOfBytes, out UInt64 lpTotalNumberOfFreeBytes);
+            
             [StructLayout(LayoutKind.Sequential)]
             public struct RTL_OSVERSIONINFOEX
             {
@@ -102,6 +105,11 @@ namespace Core
                 out MachineType processMachine,
                 out MachineType nativeMachine
             );
+            
+            [DllImport("Kernel32.dll")]
+            public static extern ushort GetUserDefaultUILanguage();
+            [DllImport("kernel32.dll")]
+            public static extern ushort GetSystemDefaultUILanguage();
         }
 
         public static class SystemInfoEx
@@ -122,6 +130,12 @@ namespace Core
                     return memStatus.ullTotalPhys;
                 else
                     return 0;
+            }
+        
+            public static ulong GetFreeDiskSpaceInBytes()
+            {
+                SystemInfo.GetDiskFreeSpaceEx(null, out ulong freeBytesAvailable, out ulong totalNumberOfBytes, out ulong totalNumberOfFreeBytes);
+                return freeBytesAvailable;
             }
 
             public static Architecture GetArchitecture()
@@ -228,6 +242,24 @@ namespace Core
                 {
                     result.Edition = "Home";
                 }
+
+                return result;
+            }
+            
+            public static string GetSystemLanguage()
+            {
+                var result = Wrap.ExecuteSafe(() => CultureInfo.GetCultureInfo(SystemInfo.GetSystemDefaultUILanguage()).ToString(), SystemInfo.GetSystemDefaultUILanguage().ToString()).Value;
+                if (string.IsNullOrWhiteSpace(result))
+                    result = SystemInfo.GetSystemDefaultUILanguage().ToString();
+
+                return result;
+            }
+
+            public static string GetUserLanguage()
+            {
+                var result = Wrap.ExecuteSafe(() => CultureInfo.GetCultureInfo(SystemInfo.GetUserDefaultUILanguage()).ToString(), SystemInfo.GetUserDefaultUILanguage().ToString()).Value;
+                if (string.IsNullOrWhiteSpace(result))
+                    result = SystemInfo.GetUserDefaultUILanguage().ToString();
 
                 return result;
             }
@@ -1305,6 +1337,35 @@ namespace Core
                 var result = Marshal.AllocHGlobal(Math.Max(size, length));
                 Win32.Tokens.GetTokenInformation(token, information, result, length, out length);
                 return result;
+            }
+            
+            public static SafeTokenHandle GetCurrentProcessToken(Tokens.SECURITY_IMPERSONATION_LEVEL impersonationLevel = Tokens.SECURITY_IMPERSONATION_LEVEL.SecurityIdentification, Tokens.TOKEN_TYPE tokenType = Tokens.TOKEN_TYPE.TokenPrimary)
+            {
+                using var rawToken = GetRawCurrentProcessToken();
+                return DuplicateToken(rawToken, impersonationLevel, tokenType);
+            }
+        
+            public static SafeTokenHandle GetRawCurrentProcessToken()
+            {
+                var processHandle = Win32.Process.GetCurrentProcess();
+                if (!Win32.Tokens.OpenProcessToken(processHandle, Win32.Tokens.TokenAccessFlags.MAXIMUM_ALLOWED, out Win32.TokensEx.SafeTokenHandle processToken))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcessToken");
+
+                return processToken;
+            }
+
+            public static SafeTokenHandle DuplicateToken(SafeTokenHandle token, Tokens.SECURITY_IMPERSONATION_LEVEL impersonationLevel, Tokens.TOKEN_TYPE tokenType)
+            {
+                if (!Win32.Tokens.DuplicateTokenEx(token, Win32.Tokens.TokenAccessFlags.TOKEN_ALL_ACCESS,
+                        IntPtr.Zero,
+                        impersonationLevel,
+                        tokenType, out var duplicatedToken))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(),
+                        "Failed to duplicate token.");
+                }
+
+                return duplicatedToken;
             }
         }
 

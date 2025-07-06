@@ -17,6 +17,7 @@ namespace TrustedUninstaller.Shared.Actions
 {
     public class CmdAction : Tasks.TaskActionWithOutputProcessor, ITaskAction
     {
+        public override string? IsISOCompatible() => "For safety reasons, CmdAction does not support iso.";
         public void RunTaskOnMainThread(Output.OutputWriter output)
         {
             if (InProgress) throw new TaskInProgressException("Another Cmd action was called while one was in progress.");
@@ -36,6 +37,7 @@ namespace TrustedUninstaller.Shared.Actions
 
             InProgress = false;
         }
+
         [YamlMember(typeof(Privilege), Alias = "runas")]
         public Privilege RunAs { get; set; } = Privilege.TrustedInstaller;
         
