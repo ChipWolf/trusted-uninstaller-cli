@@ -11,10 +11,21 @@ on:
         description: 'TrustedUninstaller CLI build run ID to test with'
         required: false
         default: 'latest'
+  push:
+    branches: [ public ]
+    paths: [ '.github/workflows/test-iso-functionality.yml' ]
 
 permissions:
   contents: read
-  actions: read
+  actions: write
+  checks: read
+  deployments: read
+  issues: read
+  packages: read
+  pull-requests: read
+  repository-projects: read
+  security-events: read
+  statuses: read
 
 jobs:
   test-iso:
@@ -85,47 +96,112 @@ jobs:
       run: |
         ./TrustedUninstaller.CLI.exe --version
         
-    - name: Create test ISO (if no ISO provided)
-      if: ${{ github.event.inputs.iso_artifact_url == '' }}
+    - name: Check cross-repo access
       run: |
-        # Create a minimal test ISO structure for testing
-        New-Item -ItemType Directory -Force -Path "test-iso"
-        New-Item -ItemType Directory -Force -Path "test-iso/sources"
+        Write-Host "Testing access to win-img-factory repository..."
+        try {
+          gh repo view wolfwarp/win-img-factory --json name,isPrivate,visibility
+        } catch {
+          Write-Host "Cannot access repository info: $_"
+        }
         
-        # Create a dummy install.wim file (very small for testing)
-        $dummyContent = "This is a test WIM file for ISO functionality testing"
-        $dummyContent | Out-File -FilePath "test-iso/sources/install.wim" -Encoding ASCII
-        
-        # Create basic ISO structure files
-        "Test ISO" | Out-File -FilePath "test-iso/README.txt" -Encoding ASCII
-        
-        Write-Host "Created test ISO structure at test-iso/"
-        
-    - name: Test ISO Command Parsing
+    - name: Download ISO from win-img-factory
       run: |
-        # Test the CLI with ISO parameters (dry run to test parsing)
-        Write-Host "Testing ISO command parameter parsing..."
+        Write-Host "Downloading ISO artifact from win-img-factory build..."
+        
+        # Try to download the artifact from the specified run
+        try {
+          # Set up GitHub CLI with token for cross-repo access
+          $env:GITHUB_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          
+          # First try to view the run details
+          Write-Host "Checking run details..."
+          gh run view 18699722234 --repo wolfwarp/win-img-factory
+          
+          # Download from the specific win-img-factory run
+          Write-Host "Attempting to download artifacts..."
+          gh run download 18699722234 --repo wolfwarp/win-img-factory
+          
+          # List what was downloaded
+          Write-Host "Downloaded files:"
+          Get-ChildItem -Recurse | Where-Object { -not $_.PSIsContainer } | ForEach-Object { Write-Host $_.FullName }
+          
+          # Find the ISO file in the downloaded artifacts
+          $isoFiles = Get-ChildItem -Recurse -Filter "*.iso"
+          if ($isoFiles.Count -gt 0) {
+            $isoFile = $isoFiles[0]
+            Write-Host "Found ISO file: $($isoFile.FullName)"
+            Write-Host "ISO file size: $([math]::Round($isoFile.Length / 1MB, 2)) MB"
+            
+            # Move/copy the ISO to a standard location
+            Copy-Item $isoFile.FullName "test-input.iso"
+            Write-Host "Copied ISO to test-input.iso"
+          } else {
+            Write-Host "No ISO files found in artifacts. Available files:"
+            Get-ChildItem -Recurse | ForEach-Object { Write-Host "  $($_.Name)" }
+          }
+          
+        } catch {
+          Write-Host "Failed to download from win-img-factory: $_"
+          Write-Host "Creating fallback test ISO structure..."
+          
+          # Fallback: Create a minimal test ISO structure
+          New-Item -ItemType Directory -Force -Path "test-iso"
+          New-Item -ItemType Directory -Force -Path "test-iso/sources"
+          
+          # Create a dummy install.wim file (very small for testing)
+          $dummyContent = "This is a test WIM file for ISO functionality testing"
+          $dummyContent | Out-File -FilePath "test-iso/sources/install.wim" -Encoding ASCII
+          
+          # Create basic ISO structure files
+          "Test ISO" | Out-File -FilePath "test-iso/README.txt" -Encoding ASCII
+          Write-Host "Created fallback test ISO structure at test-iso/"
+        }
+        
+    - name: Test ISO Command with Real ISO
+      run: |
+        Write-Host "Testing ISO command with downloaded ISO..."
+        
+        # Determine which ISO file to use
+        $isoPath = "test-input.iso"
+        if (-not (Test-Path $isoPath)) {
+          $isoPath = "test-iso"
+          Write-Host "Using fallback test ISO structure"
+        } else {
+          Write-Host "Using downloaded ISO: $isoPath"
+        }
         
         try {
-          # Test with minimal required parameters
+          # Test with the downloaded ISO
+          Write-Host "Running TrustedUninstaller ISO command..."
           $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList @(
             "ISO",
             "--playbook-path", "test-playbook",
-            "--iso-path", "test-iso",  
-            "--output-path", "output-test.iso",
-            "--architecture", "x64"
-          ) -Wait -NoNewWindow -PassThru -RedirectStandardOutput "output.txt" -RedirectStandardError "error.txt"
+            "--iso-path", $isoPath,
+            "--output-path", "ameliorated-test.iso",
+            "--architecture", "x64",
+            "--verified"
+          ) -Wait -NoNewWindow -PassThru -RedirectStandardOutput "iso-output.txt" -RedirectStandardError "iso-error.txt"
           
-          Write-Host "Exit code: $($process.ExitCode)"
+          Write-Host "ISO Command Exit code: $($process.ExitCode)"
           
-          if (Test-Path "output.txt") {
-            Write-Host "=== STDOUT ==="
-            Get-Content "output.txt"
+          if (Test-Path "iso-output.txt") {
+            Write-Host "=== ISO STDOUT ==="
+            Get-Content "iso-output.txt"
           }
           
-          if (Test-Path "error.txt") {
-            Write-Host "=== STDERR ==="
-            Get-Content "error.txt"
+          if (Test-Path "iso-error.txt") {
+            Write-Host "=== ISO STDERR ==="  
+            Get-Content "iso-error.txt"
+          }
+          
+          # Check if output ISO was created
+          if (Test-Path "ameliorated-test.iso") {
+            $outputIso = Get-Item "ameliorated-test.iso"
+            Write-Host "✅ Output ISO created successfully!"
+            Write-Host "Output ISO size: $([math]::Round($outputIso.Length / 1MB, 2)) MB"
+          } else {
+            Write-Host "❌ Output ISO was not created"
           }
           
         } catch {
