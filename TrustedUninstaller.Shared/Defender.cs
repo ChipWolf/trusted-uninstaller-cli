@@ -595,7 +595,7 @@ namespace TrustedUninstaller.Shared
             }
             
             Assembly assembly = Assembly.GetEntryAssembly();
-            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.GUI.Resources.Z-AME-NoDefender-Package31bf3856ad364e35{cabArch}1.0.0.0.cab"))
+            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.Z-AME-NoDefender-Package31bf3856ad364e35{cabArch}1.0.0.0.cab"))
             {
                 byte[] buffer = new byte[stream!.Length];
                 stream.Read(buffer, 0, buffer.Length);

@@ -155,7 +155,7 @@ namespace TrustedUninstaller.CLI
                             if (!remnantsOnly)
                             {
                                 Console.WriteLine("\r\nRestarting system...");
-                                CmdAction reboot = new CmdAction()
+                                TrustedUninstaller.Shared.Actions.CmdAction reboot = new TrustedUninstaller.Shared.Actions.CmdAction()
                                 {
                                     Command = "timeout /t 1 & shutdown /r /t 0",
                                     Wait = false
@@ -207,21 +207,21 @@ namespace TrustedUninstaller.CLI
 
             if (!AmeliorationUtil.Playbook.UseKernelDriver.HasValue)
             {
-                if (new RegistryValueAction()
+                if (new TrustedUninstaller.Shared.Actions.RegistryValueAction()
                     {
                         KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                         Value = "Enabled",
                         Data = 1,
                     }.GetStatus(Output.OutputWriter.Null)
-                    != UninstallTaskStatus.Completed
+                    != TrustedUninstaller.Shared.Tasks.UninstallTaskStatus.Completed
                     &&
-                    new RegistryValueAction()
+                    new TrustedUninstaller.Shared.Actions.RegistryValueAction()
                     {
                         KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\CI\Config",
                         Value = "VulnerableDriverBlocklistEnable",
                         Data = 0,
                     }.GetStatus(Output.OutputWriter.Null)
-                    == UninstallTaskStatus.Completed && (await GetDefenderToggles()).All(toggleOn => !toggleOn))
+                    == TrustedUninstaller.Shared.Tasks.UninstallTaskStatus.Completed && (await GetDefenderToggles()).All(toggleOn => !toggleOn))
                 {
                     AmeliorationUtil.UseKernelDriver = true;
                 }
@@ -630,19 +630,19 @@ namespace TrustedUninstaller.CLI
                 // Set kernel driver usage
                 if (!AmeliorationUtil.Playbook.UseKernelDriver.HasValue)
                 {
-                    if (new RegistryValueAction()
+                    if (new TrustedUninstaller.Shared.Actions.RegistryValueAction()
                         {
                             KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                             Value = "Enabled",
                             Data = 1,
-                        }.GetStatus(Output.OutputWriter.Null) != UninstallTaskStatus.Completed
+                        }.GetStatus(Output.OutputWriter.Null) != TrustedUninstaller.Shared.Actions.UninstallTaskStatus.Completed
                         &&
-                        new RegistryValueAction()
+                        new TrustedUninstaller.Shared.Actions.RegistryValueAction()
                         {
                             KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\CI\Config",
                             Value = "VulnerableDriverBlocklistEnable",
                             Data = 0,
-                        }.GetStatus(Output.OutputWriter.Null) == UninstallTaskStatus.Completed && 
+                        }.GetStatus(Output.OutputWriter.Null) == TrustedUninstaller.Shared.Actions.UninstallTaskStatus.Completed && 
                         (await GetDefenderToggles()).All(toggleOn => !toggleOn))
                     {
                         AmeliorationUtil.UseKernelDriver = true;

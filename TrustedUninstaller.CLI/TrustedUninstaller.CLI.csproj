@@ -160,8 +160,8 @@
     <EmbeddedResource Include="Properties\resources\7za.exe" />
     <EmbeddedResource Include="Properties\resources\7zxa.dll" />
     <EmbeddedResource Include="Properties\resources\CLI-Resources.7z" />
-    <!-- <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package31bf3856ad364e35amd641.0.0.0.cab" /> -->
-    <!-- <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package31bf3856ad364e35arm641.0.0.0.cab" /> -->
+    <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package31bf3856ad364e35amd641.0.0.0.cab" />
+    <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package31bf3856ad364e35arm641.0.0.0.cab" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Properties\resources\ProcessInformer.7z" />
