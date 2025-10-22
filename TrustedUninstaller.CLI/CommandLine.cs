@@ -6,6 +6,7 @@ using System.Diagnostics.Internal;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Security;
 using System.Security.Principal;
@@ -43,14 +44,35 @@ namespace TrustedUninstaller.CLI
             public enum CommandType
             {
                 [RequiresArgumentData("RunData")] Run,
+                [RequiresArgumentData("ISOData")] ISO,
                 Delete,
             }
             
             [RequiredArgumentData] public Run RunData { get; set; }
+            [RequiredArgumentData] public ISO ISOData { get; set; }
 
             public class Run : IArgumentData
             {
                 [Required] [DefaultArgument] public string File { get; set; }
+            }
+
+            public class ISO : IArgumentData
+            {
+                [Required] [DefaultArgument] public string PlaybookPath { get; set; }
+                [Required] public string ISOPath { get; set; }
+                [Required] public string OutputPath { get; set; }
+                public string ISOBuild { get; set; }
+                public string ISOUpdateBuild { get; set; }
+                public Architecture Architecture { get; set; } = Architecture.X64;
+                public bool NetworkDrivers { get; set; } = false;
+                public bool GraphicsDrivers { get; set; } = false;
+                public bool SystemDrivers { get; set; } = false;
+                public bool ESD { get; set; } = false;
+                public bool Verified { get; set; } = false;
+                public bool AutoLogon { get; set; } = false;
+                public string Username { get; set; }
+                public string Password { get; set; }
+                public string AdminPassword { get; set; }
             }
         }
         

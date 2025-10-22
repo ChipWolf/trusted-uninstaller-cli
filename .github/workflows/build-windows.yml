@@ -1,0 +1,39 @@
+name: Build .NET Framework (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ public ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@v1
+
+    - name: Restore NuGet packages
+      run: nuget restore TrustedUninstaller.sln
+
+    - name: Build solution (Release x64)
+      shell: powershell
+      run: |
+        msbuild TrustedUninstaller.sln /p:Configuration=Release /p:Platform=x64 /m
+
+    - name: Collect output
+      shell: powershell
+      run: |
+        $out = "build-output"
+        New-Item -ItemType Directory -Force -Path $out | Out-Null
+        Copy-Item -Path "TrustedUninstaller.CLI\bin\x64\Release\*" -Destination $out -Recurse -Force
+        Get-ChildItem -Path $out -Recurse | Write-Host
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: trusted-uninstaller-cli-build
+        path: build-output

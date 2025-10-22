@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Core;
+using Core.Actions;
 using Interprocess;
 using Microsoft.Win32;
 using TrustedUninstaller.Shared;
@@ -70,9 +71,33 @@ namespace TrustedUninstaller.CLI
             */
 #endif
 
+            // Check if this is an ISO command
+            if (args.Length >= 1 && args[0].Equals("ISO", StringComparison.OrdinalIgnoreCase))
+            {
+                return await HandleISOCommand(args);
+            }
+
             if (args.Length < 1 || !Directory.Exists(args[0]))
             {
                 Console.WriteLine("No Playbook selected.");
+                Console.WriteLine();
+                Console.WriteLine("Usage:");
+                Console.WriteLine("  TrustedUninstaller.CLI.exe \"<Playbook Path>\" [options...]");
+                Console.WriteLine("  TrustedUninstaller.CLI.exe ISO \"<Playbook Path>\" --ISOPath \"<Input ISO Path>\" --OutputPath \"<Output ISO Path>\" [additional options...]");
+                Console.WriteLine();
+                Console.WriteLine("ISO Mode Options:");
+                Console.WriteLine("  --ISOBuild         Windows build number (optional)");
+                Console.WriteLine("  --ISOUpdateBuild   Windows update build number (optional)");
+                Console.WriteLine("  --Architecture     Target architecture: X86, X64, Arm, Arm64 (default: X64)");
+                Console.WriteLine("  --NetworkDrivers   Include network drivers (default: false)");
+                Console.WriteLine("  --GraphicsDrivers  Include graphics drivers (default: false)");
+                Console.WriteLine("  --SystemDrivers    Include system drivers (default: false)");
+                Console.WriteLine("  --ESD             Output as ESD format (default: false)");
+                Console.WriteLine("  --Verified        Mark as verified (default: false)");
+                Console.WriteLine("  --AutoLogon       Enable auto logon (default: false)");
+                Console.WriteLine("  --Username        OOBE username");
+                Console.WriteLine("  --Password        OOBE password");
+                Console.WriteLine("  --AdminPassword   Administrator password");
                 return -1;
             }
 
@@ -519,6 +544,214 @@ namespace TrustedUninstaller.CLI
                     : 
                     InterLink.ExecuteAsync(() => Defender.KillAndDisable(progress, messageReporter, false, true));
             await workTask;
+        }
+
+        private static async Task<int> HandleISOCommand(string[] args)
+        {
+            try
+            {
+                // Parse ISO command arguments
+                var isoData = CommandLine.ParseArguments(args) as CommandLine.Execute;
+                if (isoData == null || isoData.Command != CommandLine.Execute.CommandType.ISO || isoData.ISOData == null)
+                {
+                    Console.WriteLine("Error: Invalid ISO command arguments");
+                    return -1;
+                }
+
+                var iso = isoData.ISOData;
+
+                // Validate required paths
+                if (!Directory.Exists(iso.PlaybookPath))
+                {
+                    Console.WriteLine($"Error: Playbook directory not found: {iso.PlaybookPath}");
+                    return -1;
+                }
+
+                if (!File.Exists(iso.ISOPath))
+                {
+                    Console.WriteLine($"Error: ISO file not found: {iso.ISOPath}");
+                    return -1;
+                }
+
+                var outputDir = Path.GetDirectoryName(iso.OutputPath);
+                if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(outputDir);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error: Cannot create output directory {outputDir}: {ex.Message}");
+                        return -1;
+                    }
+                }
+
+                // Load playbook
+                AmeliorationUtil.Playbook = AmeliorationUtil.DeserializePlaybook(Path.GetFullPath(iso.PlaybookPath));
+
+                if (!Directory.Exists($"{AmeliorationUtil.Playbook.Path}\\Configuration") ||
+                    Directory.GetFiles($"{AmeliorationUtil.Playbook.Path}\\Configuration").Length == 0)
+                {
+                    Console.WriteLine("Configuration folder is empty, put YAML files in it and restart the application.");
+                    return -1;
+                }
+
+                ExtractResourceFolder("resources", Directory.GetCurrentDirectory());
+
+                await InterLink.InitializeConnection(Level.Administrator, Mode.TwoWay);
+
+                // Get playbook options (for ISO mode, we'll use all default options)
+                List<string> defaultOptions = new List<string>();
+                if (AmeliorationUtil.Playbook.FeaturePages != null)
+                {
+                    foreach (var page in AmeliorationUtil.Playbook.FeaturePages)
+                    {
+                        if (page.DependsOn != null && !defaultOptions.Contains(page.DependsOn))
+                            continue;
+
+                        if (page.GetType() == typeof(Playbook.CheckboxPage))
+                        {
+                            foreach (var option in ((Playbook.CheckboxPage)page).Options.Where(x => ((Playbook.CheckboxPage.CheckboxOption)x).IsChecked))
+                            {
+                                defaultOptions.Add(option.Name);
+                            }
+                        }
+
+                        if (page.GetType() == typeof(Playbook.RadioPage))
+                            defaultOptions.Add(((Playbook.RadioPage)page).DefaultOption);
+                        if (page.GetType() == typeof(Playbook.RadioImagePage))
+                            defaultOptions.Add(((Playbook.RadioImagePage)page).DefaultOption);
+                    }
+                }
+
+                var allOptions = AmeliorationUtil.Playbook.FeaturePages?.SelectMany(x => x.Options.Select(o => o.Name)).Where(x => !string.IsNullOrEmpty(x)).ToArray() ?? new string[] { };
+
+                // Set kernel driver usage
+                if (!AmeliorationUtil.Playbook.UseKernelDriver.HasValue)
+                {
+                    if (new RegistryValueAction()
+                        {
+                            KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
+                            Value = "Enabled",
+                            Data = 1,
+                        }.GetStatus(Output.OutputWriter.Null) != UninstallTaskStatus.Completed
+                        &&
+                        new RegistryValueAction()
+                        {
+                            KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\CI\Config",
+                            Value = "VulnerableDriverBlocklistEnable",
+                            Data = 0,
+                        }.GetStatus(Output.OutputWriter.Null) == UninstallTaskStatus.Completed && 
+                        (await GetDefenderToggles()).All(toggleOn => !toggleOn))
+                    {
+                        AmeliorationUtil.UseKernelDriver = true;
+                    }
+                }
+                else
+                    AmeliorationUtil.UseKernelDriver = AmeliorationUtil.Playbook.UseKernelDriver.Value;
+
+                // Extract CLI-Resources if not present
+                try
+                {
+                    if (!Directory.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ame-assassin")))
+                    {
+                        Console.WriteLine("Extracting resources");
+                        ExtractArchive(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CLI-Resources.7z"), AppDomain.CurrentDomain.BaseDirectory);
+                        if (AmeliorationUtil.UseKernelDriver)
+                            ExtractArchive(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ProcessInformer.7z"), AppDomain.CurrentDomain.BaseDirectory);
+                        try
+                        {
+                            File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CLI-Resources.7z"));
+                            File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ProcessInformer.7z"));
+                        }
+                        catch (Exception e)
+                        {
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Error extracting resources: {e.Message}");
+                    return -1;
+                }
+
+                // Launch TrustedInstaller process
+                var launchResult = await SafeTask.Run(
+                    () => InterLink.LaunchNode(TargetLevel.Administrator,
+                        arguments => NativeProcess.StartProcessAsTI(Win32.ProcessEx.GetCurrentProcessFileLocation(), arguments), Level.TrustedInstaller, Mode.TwoWay,
+                        Process.GetCurrentProcess().Id, false),
+                    true);
+                if (launchResult.Failed)
+                {
+                    Console.WriteLine("Could not initialize TrustedInstaller process. Check the error logs and contact the team for more information.");
+                    return -1;
+                }
+
+                Console.WriteLine($"Starting ISO mastering for playbook: {AmeliorationUtil.Playbook.Name}");
+                Console.WriteLine($"Input ISO: {iso.ISOPath}");
+                Console.WriteLine($"Output ISO: {iso.OutputPath}");
+                Console.WriteLine($"Architecture: {iso.Architecture}");
+
+                var status = "Starting ISO mastering";
+                bool errorsOccurred = false;
+                try
+                {
+                    using (var reporter = new InterLink.InterMessageReporter(statusText => { status = statusText.TrimEnd('.') + "..."; }))
+                    {
+                        using (var progress = new InterLink.InterProgress(async value => { Console.WriteLine($"{value:F1}% {status}"); }))
+                        {
+                            errorsOccurred = await InterLink.ExecuteAsync(() => AmeliorationUtil.RunPlaybook(
+                                AmeliorationUtil.Playbook.Path,
+                                iso.NetworkDrivers,
+                                iso.GraphicsDrivers, 
+                                iso.SystemDrivers,
+                                iso.Verified,
+                                iso.AutoLogon,
+                                iso.Username,
+                                iso.Password,
+                                iso.AdminPassword,
+                                iso.ESD,
+                                iso.OutputPath,
+                                iso.ISOPath,
+                                iso.ISOBuild,
+                                iso.ISOUpdateBuild,
+                                iso.Architecture,
+                                AmeliorationUtil.Playbook.Name,
+                                AmeliorationUtil.Playbook.Version,
+                                defaultOptions.ToArray(),
+                                allOptions,
+                                Environment.CurrentDirectory,
+                                progress,
+                                reporter,
+                                AmeliorationUtil.UseKernelDriver));
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    InterLink.ShutdownNode(Level.TrustedInstaller);
+                    Console.WriteLine($"\r\nFatal ISO Mastering Error: {exception.Message}");
+                    Console.WriteLine($"Stack trace: {exception.StackTrace}");
+                    return -1;
+                }
+
+                if (errorsOccurred)
+                {
+                    Console.WriteLine("\r\nISO mastering completed with errors.");
+                    return 1;
+                }
+                else
+                {
+                    Console.WriteLine($"\r\nISO mastering completed successfully. Output saved to: {iso.OutputPath}");
+                    return 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing ISO command: {ex.Message}");
+                return -1;
+            }
         }
     }
 }
