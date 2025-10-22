@@ -24,6 +24,7 @@ jobs:
       with:
         path: |
           ~/.nuget/packages
+          ~/AppData/Local/NuGet/v3-cache
           packages
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/packages.config') }}
         restore-keys: |
