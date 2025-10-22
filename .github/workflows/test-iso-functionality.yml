@@ -54,42 +54,7 @@ jobs:
         gh run download $latestRun.databaseId --name trusted-uninstaller-cli-build
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: Create test playbook
-      run: |
-        New-Item -ItemType Directory -Force -Path "test-playbook"
-        New-Item -ItemType Directory -Force -Path "test-playbook/Configuration"
-        
-        # Create a minimal test playbook YAML
-        @"
-        Name: Test Playbook
-        Version: 1.0.0
-        SupportedBuilds: ['22621']
-        Description: Test playbook for ISO functionality
-        
-        Actions:
-          - Task: Configure Test Action
-            Actions:
-              - !registryValue:
-                  KeyName: 'HKLM\SOFTWARE\Test'
-                  Value: 'TestValue'
-                  Data: 'TestData'
-                  Type: REG_SZ
-        "@ | Out-File -FilePath "test-playbook/playbook.yaml" -Encoding UTF8
-        
-        # Create a minimal configuration YAML
-        @"
-        title: Test Configuration
-        description: Test configuration for ISO mastering
-        
-        actions:
-          - !registryValue:
-              KeyName: 'HKLM\SOFTWARE\TestConfig'
-              Value: 'ConfigValue'
-              Data: 'ConfigData'
-              Type: REG_SZ
-        "@ | Out-File -FilePath "test-playbook/Configuration/test-config.yaml" -Encoding UTF8
-        
+
     - name: Test CLI Help Command
       run: |
         # Help command may return non-zero exit code, but we want to continue
