@@ -635,14 +635,14 @@ namespace TrustedUninstaller.CLI
                             KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
                             Value = "Enabled",
                             Data = 1,
-                        }.GetStatus(Output.OutputWriter.Null) != Core.Actions.UninstallTaskStatus.Completed
+                        }.GetStatus(Output.OutputWriter.Null) != TrustedUninstaller.Shared.Actions.UninstallTaskStatus.Completed
                         &&
                         new TrustedUninstaller.Shared.Actions.RegistryValueAction()
                         {
                             KeyName = @"HKLM\SYSTEM\CurrentControlSet\Control\CI\Config",
                             Value = "VulnerableDriverBlocklistEnable",
                             Data = 0,
-                        }.GetStatus(Output.OutputWriter.Null) == Core.Actions.UninstallTaskStatus.Completed && 
+                        }.GetStatus(Output.OutputWriter.Null) == TrustedUninstaller.Shared.Actions.UninstallTaskStatus.Completed && 
                         (await GetDefenderToggles()).All(toggleOn => !toggleOn))
                     {
                         AmeliorationUtil.UseKernelDriver = true;
