@@ -36,6 +36,45 @@ jobs:
         Copy-Item -Path "TrustedUninstaller.CLI\bin\x64\Release\*" -Destination $out -Recurse -Force
         Get-ChildItem -Path $out -Recurse | Write-Host
 
+    - name: Test CLI functionality
+      shell: powershell
+      working-directory: build-output
+      run: |
+        Write-Host "Testing CLI functionality..."
+        
+        # Test help command
+        Write-Host "=== Testing --help ==="
+        try {
+          $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList "--help" -Wait -NoNewWindow -PassThru -RedirectStandardOutput "help.txt" -RedirectStandardError "help_err.txt"
+          Write-Host "Help exit code: $($process.ExitCode)"
+          if (Test-Path "help.txt") { Get-Content "help.txt" }
+          if (Test-Path "help_err.txt") { Get-Content "help_err.txt" }
+        } catch {
+          Write-Host "Help test failed: $_"
+        }
+        
+        # Test version command
+        Write-Host "`n=== Testing --version ==="
+        try {
+          $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList "--version" -Wait -NoNewWindow -PassThru -RedirectStandardOutput "version.txt" -RedirectStandardError "version_err.txt"
+          Write-Host "Version exit code: $($process.ExitCode)"
+          if (Test-Path "version.txt") { Get-Content "version.txt" }
+          if (Test-Path "version_err.txt") { Get-Content "version_err.txt" }
+        } catch {
+          Write-Host "Version test failed: $_"
+        }
+        
+        # Test ISO command parsing (should fail gracefully with missing args)
+        Write-Host "`n=== Testing ISO command parsing ==="
+        try {
+          $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList "ISO" -Wait -NoNewWindow -PassThru -RedirectStandardOutput "iso.txt" -RedirectStandardError "iso_err.txt"
+          Write-Host "ISO command exit code: $($process.ExitCode)"
+          if (Test-Path "iso.txt") { Get-Content "iso.txt" }
+          if (Test-Path "iso_err.txt") { Get-Content "iso_err.txt" }
+        } catch {
+          Write-Host "ISO test failed: $_"
+        }
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

@@ -550,8 +550,15 @@ namespace TrustedUninstaller.CLI
         {
             try
             {
+                // Transform ISO command arguments to Execute format
+                // Convert ["ISO", "playbook", "--iso-path", "input.iso", ...] 
+                // to ["Execute", "ISO", "playbook", "--iso-path", "input.iso", ...]
+                var transformedArgs = new string[args.Length + 1];
+                transformedArgs[0] = "Execute";
+                Array.Copy(args, 0, transformedArgs, 1, args.Length);
+                
                 // Parse ISO command arguments
-                var isoData = CommandLine.ParseArguments(args) as CommandLine.Execute;
+                var isoData = CommandLine.ParseArguments(transformedArgs) as CommandLine.Execute;
                 if (isoData == null || isoData.Command != CommandLine.Execute.CommandType.ISO || isoData.ISOData == null)
                 {
                     Console.WriteLine("Error: Invalid ISO command arguments");
