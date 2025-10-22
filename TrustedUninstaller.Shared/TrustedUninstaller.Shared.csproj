@@ -233,6 +233,19 @@
     <Content Include="7z.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <!-- Native libwim DLLs for WimLib functionality -->
+    <Content Include="../ManagedWimLib/runtimes/win-x64/native/libwim-15.dll">
+      <Link>x64/libwim-15.dll</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../ManagedWimLib/runtimes/win-x86/native/libwim-15.dll">
+      <Link>x86/libwim-15.dll</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../ManagedWimLib/runtimes/win-arm64/native/libwim-15.dll">
+      <Link>arm64/libwim-15.dll</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
