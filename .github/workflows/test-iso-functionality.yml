@@ -106,6 +106,7 @@ jobs:
       run: |
         Write-Host "Testing access to win-img-factory repository..."
         try {
+          $env:GH_TOKEN = "${{ secrets.PAT }}"
           gh repo view wolfwarp/win-img-factory --json name,isPrivate,visibility
         } catch {
           Write-Host "Cannot access repository info: $_"
@@ -117,7 +118,8 @@ jobs:
         
         # Try to download the artifact from the specified run
         try {
-          # Set up GitHub CLI with PAT for cross-repo access
+          # Set up GitHub CLI with PAT for cross-repo access  
+          $env:GH_TOKEN = "${{ secrets.PAT }}"
           $env:GITHUB_TOKEN = "${{ secrets.PAT }}"
           
           # First try to view the run details
