@@ -19,6 +19,17 @@ jobs:
     - name: Setup NuGet
       uses: nuget/setup-nuget@v1
 
+    - name: Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~/AppData/Local/NuGet/v3-cache
+          packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/packages.config') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
     - name: Restore NuGet packages
       run: nuget restore TrustedUninstaller.sln
 
