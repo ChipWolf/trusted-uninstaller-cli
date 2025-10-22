@@ -182,6 +182,27 @@ Notes
 - Building the project requires Windows because it targets .NET Framework 4.7.2 and uses Windows-only APIs. The Dockerfile windows image and the GitHub Actions runner both run on Windows.
 - Building on Linux/WSL directly is not supported because .NET Framework reference assemblies aren't available there.
 
+## Important: Missing Defender Removal Resources
+
+⚠️ **The Windows Defender removal functionality requires proprietary CAB (Cabinet) files that are NOT included in this open-source repository for legal and distribution reasons.**
+
+### Required Files
+- `Z-AME-NoDefender-Package31bf3856ad364e35amd641.0.0.0.cab` (for AMD64 systems)
+- `Z-AME-NoDefender-Package31bf3856ad364e35arm641.0.0.0.cab` (for ARM64 systems)
+
+### Impact
+**Without these CAB files:**
+- ✅ The project compiles successfully 
+- ✅ All ISO mastering functionality works normally
+- ❌ Defender removal features will fail at runtime if invoked
+- ❌ The `ExtractCab()` method in `Defender.cs` will throw exceptions when accessing missing embedded resources
+
+### Resolution
+If you need Defender removal functionality, you must obtain these files from legitimate sources and add them as embedded resources to the project files:
+- `TrustedUninstaller.CLI/TrustedUninstaller.CLI.csproj` (lines 163-164)
+- `TrustedUninstaller.Shared/TrustedUninstaller.Shared.csproj` (lines 220-221)
+
+Currently these resource references are commented out to allow compilation without the files.
 
 ## License
 This tool has an [MIT license](https://en.wikipedia.org/wiki/MIT_License), which waives any requirements or rules governing the source code’s use, removing politics from the equation.
