@@ -186,11 +186,11 @@ jobs:
           Write-Host "Running TrustedUninstaller ISO command..."
           $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList @(
             "ISO",
-            "--playbook-path", "test-playbook",
-            "--iso-path", $isoPath,
-            "--output-path", "ameliorated-test.iso",
-            "--architecture", "x64",
-            "--verified"
+            "test-playbook",
+            "--ISOPath", $isoPath,
+            "--OutputPath", "ameliorated-test.iso",
+            "--Architecture", "X64",
+            "--Verified"
           ) -Wait -NoNewWindow -PassThru -RedirectStandardOutput "iso-output.txt" -RedirectStandardError "iso-error.txt"
           
           Write-Host "ISO Command Exit code: $($process.ExitCode)"
@@ -226,9 +226,9 @@ jobs:
         try {
           $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList @(
             "ISO",
-            "--playbook-path", "nonexistent",
-            "--iso-path", "nonexistent.iso",
-            "--output-path", "output-test.iso"
+            "nonexistent",
+            "--ISOPath", "nonexistent.iso",
+            "--OutputPath", "output-test.iso"
           ) -Wait -NoNewWindow -PassThru -RedirectStandardOutput "output2.txt" -RedirectStandardError "error2.txt"
           
           Write-Host "Exit code for invalid params: $($process.ExitCode)"
