@@ -59,6 +59,8 @@ jobs:
       run: |
         # Help command may return non-zero exit code, but we want to continue
         ./TrustedUninstaller.CLI.exe --help
+        Get-ChildItem
+        Get-Location
         Write-Host "Help command completed (exit code expected to be non-zero)"
       continue-on-error: true
         
