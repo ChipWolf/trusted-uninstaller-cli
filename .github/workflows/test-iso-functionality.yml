@@ -13,7 +13,9 @@ on:
         default: 'latest'
   push:
     branches: [ public ]
-    paths: [ '.github/workflows/test-iso-functionality.yml' ]
+    paths: 
+      - '.github/workflows/test-iso-functionality.yml'
+      - 'TrustedUninstaller.CLI/**'
 
 permissions:
   contents: read
