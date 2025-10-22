@@ -15,8 +15,8 @@
     <PackageReference Include="System.Memory" Version="4.5.5" Condition=" '$(TargetFramework)' == 'net46' or '$(TargetFramework)' == 'netstandard2.0' " />
     <!-- <PackageReference Include="System.Runtime.InteropServices" Version="4.3.0" Condition=" '$(TargetFramework)' == 'net46' " /> -->
   </ItemGroup>
-  <!-- Native Library for .NET Framework 4.6 -->
-  <ItemGroup Condition=" '$(TargetFramework)' == 'net46' ">
+  <!-- Native Library for .NET Framework -->
+  <ItemGroup Condition=" '$(TargetFramework)' == 'net46' or '$(TargetFrameworkVersion)' == 'v4.7.2' ">
     <None Include="runtimes\win-x86\native\*.dll">
       <Link>x86\%(FileName)%(Extension)</Link> <!-- Project Reference -->
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
