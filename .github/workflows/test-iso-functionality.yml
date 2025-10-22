@@ -1,0 +1,181 @@
+name: Test ISO Functionality
+
+on:
+  workflow_dispatch:
+    inputs:
+      iso_artifact_url:
+        description: 'URL or artifact name for the Windows ISO to test'
+        required: false
+        default: ''
+      trusteduninstaller_run_id:
+        description: 'TrustedUninstaller CLI build run ID to test with'
+        required: false
+        default: 'latest'
+
+jobs:
+  test-iso:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET Framework
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Download TrustedUninstaller CLI build artifacts
+      if: ${{ github.event.inputs.trusteduninstaller_run_id != 'latest' }}
+      run: |
+        gh run download ${{ github.event.inputs.trusteduninstaller_run_id }} --name trusted-uninstaller-cli-build
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Download latest TrustedUninstaller CLI build artifacts
+      if: ${{ github.event.inputs.trusteduninstaller_run_id == 'latest' }}
+      run: |
+        $latestRun = gh run list --workflow="build-windows.yml" --status=success --limit=1 --json databaseId | ConvertFrom-Json | Select-Object -First 1
+        gh run download $latestRun.databaseId --name trusted-uninstaller-cli-build
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Create test playbook
+      run: |
+        New-Item -ItemType Directory -Force -Path "test-playbook"
+        New-Item -ItemType Directory -Force -Path "test-playbook/Configuration"
+        
+        # Create a minimal test playbook YAML
+        @"
+        Name: Test Playbook
+        Version: 1.0.0
+        SupportedBuilds: ['22621']
+        Description: Test playbook for ISO functionality
+        
+        Actions:
+          - Task: Configure Test Action
+            Actions:
+              - !registryValue:
+                  KeyName: 'HKLM\SOFTWARE\Test'
+                  Value: 'TestValue'
+                  Data: 'TestData'
+                  Type: REG_SZ
+        "@ | Out-File -FilePath "test-playbook/playbook.yaml" -Encoding UTF8
+        
+        # Create a minimal configuration YAML
+        @"
+        title: Test Configuration
+        description: Test configuration for ISO mastering
+        
+        actions:
+          - !registryValue:
+              KeyName: 'HKLM\SOFTWARE\TestConfig'
+              Value: 'ConfigValue'
+              Data: 'ConfigData'
+              Type: REG_SZ
+        "@ | Out-File -FilePath "test-playbook/Configuration/test-config.yaml" -Encoding UTF8
+        
+    - name: Test CLI Help Command
+      run: |
+        ./TrustedUninstaller.CLI.exe --help
+        
+    - name: Test CLI Version Command  
+      run: |
+        ./TrustedUninstaller.CLI.exe --version
+        
+    - name: Create test ISO (if no ISO provided)
+      if: ${{ github.event.inputs.iso_artifact_url == '' }}
+      run: |
+        # Create a minimal test ISO structure for testing
+        New-Item -ItemType Directory -Force -Path "test-iso"
+        New-Item -ItemType Directory -Force -Path "test-iso/sources"
+        
+        # Create a dummy install.wim file (very small for testing)
+        $dummyContent = "This is a test WIM file for ISO functionality testing"
+        $dummyContent | Out-File -FilePath "test-iso/sources/install.wim" -Encoding ASCII
+        
+        # Create basic ISO structure files
+        "Test ISO" | Out-File -FilePath "test-iso/README.txt" -Encoding ASCII
+        
+        Write-Host "Created test ISO structure at test-iso/"
+        
+    - name: Test ISO Command Parsing
+      run: |
+        # Test the CLI with ISO parameters (dry run to test parsing)
+        Write-Host "Testing ISO command parameter parsing..."
+        
+        try {
+          # Test with minimal required parameters
+          $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList @(
+            "ISO",
+            "--playbook-path", "test-playbook",
+            "--iso-path", "test-iso",  
+            "--output-path", "output-test.iso",
+            "--architecture", "x64"
+          ) -Wait -NoNewWindow -PassThru -RedirectStandardOutput "output.txt" -RedirectStandardError "error.txt"
+          
+          Write-Host "Exit code: $($process.ExitCode)"
+          
+          if (Test-Path "output.txt") {
+            Write-Host "=== STDOUT ==="
+            Get-Content "output.txt"
+          }
+          
+          if (Test-Path "error.txt") {
+            Write-Host "=== STDERR ==="
+            Get-Content "error.txt"
+          }
+          
+        } catch {
+          Write-Host "Exception running ISO command: $_"
+        }
+        
+    - name: Test Invalid ISO Command
+      run: |
+        # Test error handling with invalid parameters
+        Write-Host "Testing error handling with invalid parameters..."
+        
+        try {
+          $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList @(
+            "ISO",
+            "--playbook-path", "nonexistent",
+            "--iso-path", "nonexistent.iso",
+            "--output-path", "output-test.iso"
+          ) -Wait -NoNewWindow -PassThru -RedirectStandardOutput "output2.txt" -RedirectStandardError "error2.txt"
+          
+          Write-Host "Exit code for invalid params: $($process.ExitCode)"
+          
+          if (Test-Path "output2.txt") {
+            Write-Host "=== STDOUT (Invalid) ==="
+            Get-Content "output2.txt"
+          }
+          
+          if (Test-Path "error2.txt") {
+            Write-Host "=== STDERR (Invalid) ==="
+            Get-Content "error2.txt"
+          }
+          
+        } catch {
+          Write-Host "Exception with invalid params: $_"
+        }
+        
+    - name: List available CLI commands
+      run: |
+        Write-Host "Checking what commands are available in the CLI..."
+        
+        # Try to get help for different command formats
+        foreach ($helpArg in @("--help", "-h", "help", "/?")) {
+          Write-Host "=== Testing help with: $helpArg ==="
+          try {
+            $process = Start-Process -FilePath "./TrustedUninstaller.CLI.exe" -ArgumentList $helpArg -Wait -NoNewWindow -PassThru -RedirectStandardOutput "help_$helpArg.txt" -RedirectStandardError "help_err_$helpArg.txt"
+            
+            if (Test-Path "help_$helpArg.txt") {
+              Get-Content "help_$helpArg.txt"
+            }
+            if (Test-Path "help_err_$helpArg.txt") {
+              Write-Host "Errors:"
+              Get-Content "help_err_$helpArg.txt"
+            }
+          } catch {
+            Write-Host "Failed with $helpArg : $_"
+          }
+          Write-Host ""
+        }
