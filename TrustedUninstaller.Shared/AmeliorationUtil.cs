@@ -567,7 +567,9 @@ namespace TrustedUninstaller.Shared
 
                     try
                     {
-                        Wim.GlobalInit("libwim-15.dll", InitFlags.None);
+                        // Use architecture-specific path for libwim-15.dll
+                        string libPath = Environment.Is64BitProcess ? "x64\\libwim-15.dll" : "x86\\libwim-15.dll";
+                        Wim.GlobalInit(libPath, InitFlags.None);
                     }
                     catch (InvalidOperationException e)
                     {
