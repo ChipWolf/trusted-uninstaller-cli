@@ -1086,34 +1086,21 @@ namespace TrustedUninstaller.Shared
             var fileDir = Environment.ExpandEnvironmentVariables("%ProgramData%\\AME");
             if (!Directory.Exists(fileDir)) Directory.CreateDirectory(fileDir);
 
-            // Use the correct Windows package filename format with tildes
-            var destination = Path.Combine(fileDir, $"Z-AME-NoDefender-Package~31bf3856ad364e35~{cabArch}~~1.0.0.0.cab");
+            var destination = Path.Combine(fileDir, $"Z-AME-NoDefender-Package31bf3856ad364e35{cabArch}1.0.0.0.cab");
 
             if (File.Exists(destination))
             {
                 return destination;
             }
 
-            // Try to extract from embedded resources first
             Assembly assembly = Assembly.GetExecutingAssembly();
-            var resourceName = $"TrustedUninstaller.Shared.Properties.Z-AME-NoDefender-Package~31bf3856ad364e35~{cabArch}~~1.0.0.0.cab";
-            using (Stream? manifest = assembly?.GetManifestResourceStream(resourceName))
+            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.Z-AME-NoDefender-Package31bf3856ad364e35{cabArch}1.0.0.0.cab"))
             {
-                if (manifest != null)
-                {
-                    // Copy the embedded resource stream to disk
-                    using (var outFs = File.Create(destination))
-                    {
-                        manifest.CopyTo(outFs);
-                    }
-                    return destination;
-                }
+                byte[] buffer = new byte[stream!.Length];
+                stream.Read(buffer, 0, buffer.Length);
+                File.WriteAllBytes(destination, buffer);
             }
-
-            // If no embedded resource, provide clear error message
-            throw new FileNotFoundException($"NoDefender CAB file not found. " +
-                $"Expected embedded resource: '{resourceName}' or file at: '{destination}'. " +
-                $"Please add the CAB file to TrustedUninstaller.Shared/Properties/ and include it as an EmbeddedResource in the project file.");
+            return destination;
         }
         
         private static int RunPSCommand(string command, [CanBeNull] DataReceivedEventHandler outputHandler, [CanBeNull] DataReceivedEventHandler errorHandler) =>
