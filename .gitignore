@@ -15,6 +15,7 @@ TrustedUninstaller.GUI/gui-builder/BuildOut-*
 *.user
 *.userosscache
 *.sln.docstates
+.vscode/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
