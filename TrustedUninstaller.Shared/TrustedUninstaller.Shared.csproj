@@ -217,8 +217,8 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Properties\UsrClass.dat" />
-    <!-- <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package31bf3856ad364e35amd641.0.0.0.cab" /> -->
-    <!-- <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package31bf3856ad364e35arm641.0.0.0.cab" /> -->
+    <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package~31bf3856ad364e35~amd64~~1.0.0.0.cab" />
+    <!-- <EmbeddedResource Include="Properties\Z-AME-NoDefender-Package~31bf3856ad364e35~arm64~~1.0.0.0.cab" /> -->
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Properties\uefi-ntfs-ame.img" />
