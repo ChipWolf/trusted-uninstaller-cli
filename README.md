@@ -35,7 +35,6 @@ The CLI supports creating customized Windows installation ISOs by injecting play
 - Minimum 20GB free disk space (for extraction and processing)
 - Windows ISO file (Windows 10/11 supported)
 - AME Playbook compatible with ISO mastering
-- `mkisofs.exe` available in the application directory (included with CLI releases)
 
 #### Basic Usage
 
@@ -68,35 +67,6 @@ TrustedUninstaller.CLI.exe ISO "AME 11 v0.7" --ISOPath "Windows11.iso" --OutputP
 | `--Password` | String | *Optional* | Default password for OOBE setup |
 | `--AdminPassword` | String | *Optional* | Administrator account password |
 
-#### Process Overview
-
-1. **ISO Extraction**: The tool extracts the Windows ISO to a temporary directory
-2. **WIM Processing**: Extracts and mounts the Windows installation image (install.wim/install.esd)
-3. **Registry Modification**: Applies playbook registry changes to the offline Windows registry hives
-4. **File Injection**: Copies playbook files and OOBE components into the Windows image
-5. **Driver Integration**: Optionally integrates drivers for better hardware compatibility
-6. **Boot Configuration**: Modifies boot.wim if hardware requirement bypasses are enabled
-7. **ISO Creation**: Rebuilds the ISO with all modifications using mkisofs
-
-#### Playbook Compatibility
-
-Not all playbook actions are compatible with ISO mastering. The following action types support ISO mode:
-
-- **Registry Actions**: `RegistryKeyAction`, `RegistryValueAction` (with `iso: true`)
-- **Service Actions**: `ServiceAction` (Delete and Change operations only)
-- **File Actions**: `FileAction` (for copying files to the offline image)
-- **Software Actions**: `SoftwareAction` (cached for OOBE installation)
-- **Task Actions**: Any action with `iso: true` or `iso: only`
-
-Actions marked with `iso: only` will run exclusively during ISO mastering and not during normal installation.
-
-#### ISO Configuration Files
-
-The mastering process creates configuration files within the ISO:
-
-- `iso.conf`: Contains playbook metadata and ISO-specific settings
-- `sources\$OEM$\$$\Panther\unattend.xml`: Windows setup automation (if BitLocker/hardware bypasses enabled)
-- `ProgramData\AME\OOBE\*`: OOBE application and configuration files
 
 #### Example Workflows
 
@@ -128,25 +98,6 @@ TrustedUninstaller.CLI.exe ISO "AME-Windows11-ARM" ^
   --GraphicsDrivers
 ```
 
-#### Troubleshooting
-
-**"Not enough free space"**: Ensure you have at least 20GB free space in your temp directory and output location.
-
-**"ISO file not found"**: Verify the path to your Windows ISO file is correct and accessible.
-
-**"mkisofs.exe not found"**: Make sure mkisofs.exe is in the same directory as TrustedUninstaller.CLI.exe.
-
-**"Invalid playbook"**: Ensure your playbook contains ISO-compatible actions. Check the playbook documentation for ISO support.
-
-**Registry errors during mastering**: Some registry operations may fail on offline hives. This is normal for certain system-specific keys.
-
-#### Security Considerations
-
-- ISO mastering requires TrustedInstaller privileges to modify system files
-- The process temporarily mounts Windows registry hives for modification
-- Output ISOs contain embedded AME configurations and OOBE applications
-- Generated ISOs should be treated as modified system images
-
 ## Compilation
 
 1. Clone the repository
@@ -155,54 +106,16 @@ TrustedUninstaller.CLI.exe ISO "AME-Windows11-ARM" ^
    ```
 2. Build options
 
-Option A — Visual Studio (recommended)
+Option A — Visual Studio
 
 1. Open `TrustedUninstaller.sln` with Visual Studio (Windows)
 2. Select `Release` and `x64` and build the solution
 
-Option B — Docker on Windows (Windows host with Windows containers)
-
-1. Ensure Docker for Windows is running in **Windows Containers** mode
-2. From repository root run:
-
-```powershell
-docker build -f Dockerfile.windows -t trusted-uninstaller-cli:windows .
-docker run --rm -v ${PWD}:/out trusted-uninstaller-cli:windows
-# The built files will be inside the image at C:\app — use docker cp to extract if needed
-```
-
-Option C — GitHub Actions (CI build)
+Option B — GitHub Actions (CI build)
 
 1. Trigger the workflow manually from the Actions tab or push to the `public` branch
 2. The workflow `.github/workflows/build-windows.yml` runs on `windows-latest`, builds the solution, and uploads an artifact named `trusted-uninstaller-cli-build`
 3. Download the artifact from the workflow run artifacts and extract the built `TrustedUninstaller.CLI.exe`
-
-Notes
-
-- Building the project requires Windows because it targets .NET Framework 4.7.2 and uses Windows-only APIs. The Dockerfile windows image and the GitHub Actions runner both run on Windows.
-- Building on Linux/WSL directly is not supported because .NET Framework reference assemblies aren't available there.
-
-## Important: Missing Defender Removal Resources
-
-⚠️ **The Windows Defender removal functionality requires proprietary CAB (Cabinet) files that are NOT included in this open-source repository for legal and distribution reasons.**
-
-### Required Files
-- `Z-AME-NoDefender-Package31bf3856ad364e35amd641.0.0.0.cab` (for AMD64 systems)
-- `Z-AME-NoDefender-Package31bf3856ad364e35arm641.0.0.0.cab` (for ARM64 systems)
-
-### Impact
-**Without these CAB files:**
-- ✅ The project compiles successfully 
-- ✅ All ISO mastering functionality works normally
-- ❌ Defender removal features will fail at runtime if invoked
-- ❌ The `ExtractCab()` method in `Defender.cs` will throw exceptions when accessing missing embedded resources
-
-### Resolution
-If you need Defender removal functionality, you must obtain these files from legitimate sources and add them as embedded resources to the project files:
-- `TrustedUninstaller.CLI/TrustedUninstaller.CLI.csproj` (lines 163-164)
-- `TrustedUninstaller.Shared/TrustedUninstaller.Shared.csproj` (lines 220-221)
-
-Currently these resource references are commented out to allow compilation without the files.
 
 ## License
 This tool has an [MIT license](https://en.wikipedia.org/wiki/MIT_License), which waives any requirements or rules governing the source code’s use, removing politics from the equation.
