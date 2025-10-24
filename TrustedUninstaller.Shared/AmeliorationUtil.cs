@@ -887,7 +887,8 @@ namespace TrustedUninstaller.Shared
                         progress.Report(85);
                         await new WriteStatusAction() { Status = "Saving Image" }.RunTask(Output.OutputWriter.Null);
                         
-                        await InjectOOBE();
+                        // OOBE injection disabled - required embedded resources (oobe_shim.exe, AME.Client.exe) are not available
+                        // await InjectOOBE();
 
                         WimInstance.UnmountHives(ISOGuid, true);
                         
