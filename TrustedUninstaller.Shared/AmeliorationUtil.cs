@@ -887,7 +887,8 @@ namespace TrustedUninstaller.Shared
                         progress.Report(85);
                         await new WriteStatusAction() { Status = "Saving Image" }.RunTask(Output.OutputWriter.Null);
                         
-                        await InjectOOBE();
+                        // OOBE injection skipped - InjectOOBE method removed due to missing embedded resources
+                        // (oobe_shim.exe, AME.Client.exe are commented out in TrustedUninstaller.Shared.csproj)
 
                         WimInstance.UnmountHives(ISOGuid, true);
                         
@@ -1014,70 +1015,8 @@ namespace TrustedUninstaller.Shared
             }
         }
 
-        private static async Task InjectOOBE()
-        {
-            string destination = Path.Combine(WimPath, @"ProgramData\AME\OOBE\OOBE.exe");
-            Assembly assembly = Assembly.GetExecutingAssembly();
-            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.AME.Client.exe"))
-            {
-                byte[] buffer = new byte[stream!.Length];
-                stream.Read(buffer, 0, buffer.Length);
-                File.WriteAllBytes(destination, buffer);
-            }
-            destination = Path.Combine(WimPath, @"Windows\system32\OOBE\msoobe.exe");
-            
-            WimInstance.MoveFileOrFolder(@"Windows\system32\OOBE\msoobe.exe", @"Windows\system32\OOBE\msoobeext.exe");
-            
-            using (UnmanagedMemoryStream stream = (UnmanagedMemoryStream)assembly!.GetManifestResourceStream($"TrustedUninstaller.Shared.Properties.oobe_shim.exe"))
-            {
-                byte[] buffer = new byte[stream!.Length];
-                stream.Read(buffer, 0, buffer.Length);
-                File.WriteAllBytes(destination, buffer);
-            }
-            
-            await new Actions.RegistryValueAction()
-            {
-                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
-                Value = "DisplayName",
-                Data = "AME OOBE",
-                Type = RegistryValueType.REG_SZ
-            }.RunTask(Output.OutputWriter.Null);
-            await new Actions.RegistryValueAction()
-            {
-                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
-                Value = "ObjectName",
-                Data = "LocalSystem",
-                Type = RegistryValueType.REG_SZ
-            }.RunTask(Output.OutputWriter.Null);
-            await new Actions.RegistryValueAction()
-            {
-                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
-                Value = "ImagePath",
-                Data = "\"%ProgramData%\\AME\\OOBE\\OOBE.exe\" --service",
-                Type = RegistryValueType.REG_EXPAND_SZ
-            }.RunTask(Output.OutputWriter.Null);
-            await new Actions.RegistryValueAction()
-            {
-                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
-                Value = "ErrorControl",
-                Data = 0,
-                Type = RegistryValueType.REG_DWORD
-            }.RunTask(Output.OutputWriter.Null);         
-            await new Actions.RegistryValueAction()
-            {
-                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
-                Value = "Start",
-                Data = 2,
-                Type = RegistryValueType.REG_DWORD
-            }.RunTask(Output.OutputWriter.Null);
-            await new Actions.RegistryValueAction()
-            {
-                KeyName = @"HKLM\SYSTEM\CurrentControlSet\Services\ameoobe",
-                Value = "Type",
-                Data = 16,
-                Type = RegistryValueType.REG_DWORD
-            }.RunTask(Output.OutputWriter.Null);
-        }
+        // InjectOOBE method removed - depends on unavailable embedded resources (oobe_shim.exe, AME.Client.exe)
+        // which are commented out in TrustedUninstaller.Shared.csproj
         
         private static string ExtractCab(Architecture arch)
         {
